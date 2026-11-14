@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LabInsight · 实验数据分析助手</title>
+
+  <!-- 字体（可选，中文渲染更好看） -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- 依赖库（CDN） -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 顶部导航 -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-mark">L</span>
+        <span class="brand-name">LabInsight</span>
+        <span class="brand-sub">实验数据分析助手</span>
+      </div>
+      <nav class="tabs" id="main-tabs">
+        <button class="tab active" data-tab="import">导入数据</button>
+        <button class="tab" data-tab="preview">数据预览</button>
+        <button class="tab" data-tab="calib">校准换算</button>
+        <button class="tab" data-tab="analysis">智能分析</button>
+        <button class="tab" data-tab="filter">滤波实验</button>
+        <button class="tab" data-tab="report">生成报告</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ================= 页签一：导入数据 ================= -->
+    <section class="tab-panel active" id="tab-import">
+      <div class="page-head">
+        <h1>导入数据</h1>
+        <p class="page-desc">上传 CSV / Excel 文件，或直接粘贴串口日志。所有数据仅在浏览器本地处理，不会上传到任何服务器。</p>
+      </div>
+
+      <!-- 上传文件 -->
+      <div class="card fade-in">
+        <div class="card-head">
+          <h2>上传文件</h2>
+          <span class="card-hint">支持 .csv / .xlsx / .txt，单个文件</span>
+        </div>
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="file-input" accept=".csv,.xlsx,.txt,.log" hidden>
+          <div class="dz-icon">⬆</div>
+          <div class="dz-text">把文件拖到这里，或 <button class="link-btn" id="pick-file-btn">点击选择文件</button></div>
+          <div class="dz-sub">CSV、Excel、串口日志文本都可以</div>
+        </div>
+        <div class="file-chip hidden" id="file-chip">
+          <span class="file-chip-icon">📄</span>
+          <span class="file-chip-name" id="file-chip-name"></span>
+          <span class="file-chip-size" id="file-chip-size"></span>
+          <button class="chip-remove" id="file-chip-remove" title="移除">×</button>
+        </div>
+      </div>
+
+      <!-- 粘贴串口日志 -->
+      <div class="card fade-in">
+        <div class="card-head">
+          <h2>粘贴串口日志</h2>
+          <span class="card-hint">带前缀、乱码、单位都没关系，会自动清洗</span>
+        </div>
+        <textarea id="paste-area" class="paste-area" placeholder="把串口助手里的日志直接粘到这里，例如：&#10;[INFO] sensor init ok&#10;21:34:05.001 temp=25.32 humi=61.98 press=1012.3&#10;21:34:06.222 temp=25.34 humi=62.05 press=1012.4&#10;..."></textarea>
+        <div class="row-actions">
+          <button class="btn btn-primary" id="use-paste-btn">使用粘贴内容</button>
+          <button class="btn btn-ghost" id="clear-paste-btn">清空</button>
+          <span class="char-count" id="paste-char-count">0 字符</span>
+        </div>
+      </div>
+
+      <!-- 示例数据 -->
+      <div class="card fade-in">
+        <div class="card-head">
+          <h2>加载示例数据</h2>
+          <span class="card-hint">没有数据也能体验全部功能</span>
+        </div>
+        <div class="sample-btns">
+          <button class="btn btn-outline" id="sample-serial-btn">串口日志示例<span class="btn-note">含脏行与毛刺</span></button>
+          <button class="btn btn-outline" id="sample-csv-btn">规整 CSV 示例<span class="btn-note">温湿度气压采集</span></button>
+        </div>
+      </div>
+
+      <!-- 解析设置 -->
+      <div class="card fade-in">
+        <div class="card-head">
+          <h2>解析设置</h2>
+          <span class="card-hint">一般保持默认即可，自动识别</span>
+        </div>
+        <div class="settings-grid">
+          <label class="field">
+            <span class="field-label">数据从第几行开始</span>
+            <input type="number" id="opt-skip-rows" class="input" value="0" min="0" step="1">
+            <span class="field-help">跳过头文件、日志前缀等非数据行</span>
+          </label>
+          <label class="field">
+            <span class="field-label">时间戳列</span>
+            <select id="opt-time-col" class="input">
+              <option value="auto" selected>自动识别</option>
+              <option value="first">第一列</option>
+              <option value="none">无时间戳</option>
+            </select>
+            <span class="field-help">自动识别 HH:mm:ss / 日期 / 纯秒数</span>
+          </label>
+          <label class="field">
+            <span class="field-label">分隔符</span>
+            <select id="opt-delimiter" class="input">
+              <option value="auto" selected>自动识别</option>
+              <option value=",">逗号（,）</option>
+              <option value="tab">Tab</option>
+              <option value="space">空格</option>
+            </select>
+            <span class="field-help">用于规整表格；串口日志会按 key=value 解析</span>
+          </label>
+        </div>
+        <div class="row-actions">
+          <button class="btn btn-primary btn-lg" id="parse-btn">开始解析</button>
+        </div>
+        <div class="parse-feedback hidden" id="parse-feedback"></div>
+      </div>
+    </section>
+
+    <!-- ================= 页签二：数据预览 ================= -->
+    <section class="tab-panel" id="tab-preview">
+      <div class="empty-state" id="preview-empty">
+        <div class="empty-icon">📊</div>
+        <div class="empty-title">还没有数据</div>
+        <div class="empty-desc">请先导入数据或加载示例数据</div>
+        <button class="btn btn-primary" data-goto="import">去导入数据</button>
+      </div>
+
+      <div class="hidden" id="preview-content">
+        <div class="page-head">
+          <h1>数据预览</h1>
+          <p class="page-desc">解析与清洗结果一览，异常点已标出。</p>
+        </div>
+
+        <div class="summary-chips" id="summary-chips"></div>
+
+        <div class="card fade-in">
+          <div class="card-head">
+            <h2>数据表</h2>
+            <div class="seg-control" id="view-toggle">
+              <button class="seg active" data-view="clean">清洗后</button>
+              <button class="seg" data-view="raw">原始文本对照</button>
+            </div>
+          </div>
+          <div class="legend-row" id="table-legend"></div>
+          <div class="table-wrap" id="table-wrap"></div>
+        </div>
+
+        <div class="card fade-in hidden" id="skipped-card">
+          <div class="card-head">
+            <h2>被跳过的行</h2>
+            <span class="card-hint" id="skipped-count"></span>
+          </div>
+          <pre class="skipped-list" id="skipped-list"></pre>
+        </div>
+
+        <div class="card fade-in" id="sampling-card">
+          <div class="card-head">
+            <h2>采样质量报告</h2>
+            <span class="card-hint" id="sampling-hint"></span>
+          </div>
+          <div class="sampling-body" id="sampling-body"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 页签三：校准换算 ================= -->
+    <section class="tab-panel" id="tab-calib">
+      <div id="calib-content">
+        <div class="page-head">
+          <h1>校准换算</h1>
+          <p class="page-desc">把原始电信号读数换算成物理量。公式与参数均在页面上注明，批量换算会生成新列，原始数据保持不变。</p>
+        </div>
+
+        <div class="calib-no-data hidden" id="calib-no-data">尚未导入数据：单值换算可以直接使用；批量换算需要先导入数据。</div>
+
+        <div class="calib-mode-row">
+          <div class="seg-control" id="calib-mode">
+            <button class="seg active" data-mode="ntc">NTC 热敏电阻 → 温度</button>
+            <button class="seg" data-mode="adc">ADC 读数 → 电压</button>
+            <button class="seg" data-mode="mq">MQ 气体 → 浓度比</button>
+          </div>
+        </div>
+
+        <!-- NTC 热敏电阻 -->
+        <div class="card fade-in calib-card" id="calib-ntc">
+          <div class="card-head">
+            <h2>NTC 热敏电阻 → 温度</h2>
+            <span class="card-hint">电阻值（Ω）→ 摄氏温度（°C）</span>
+          </div>
+          <div class="formula-line" id="ntc-formula"></div>
+
+          <div class="calib-params">
+            <div class="seg-control" id="ntc-method">
+              <button class="seg active" data-method="b">B 值式</button>
+              <button class="seg" data-method="sh">Steinhart-Hart</button>
+            </div>
+
+            <div class="settings-grid" id="ntc-b-params">
+              <label class="field">
+                <span class="field-label">B 值（K）</span>
+                <input type="number" id="ntc-b" class="input" value="3950" step="1">
+                <span class="field-help">常见 3950 / 3435，见传感器手册</span>
+              </label>
+              <label class="field">
+                <span class="field-label">标称电阻 R₀（Ω）</span>
+                <input type="number" id="ntc-r0" class="input" value="10000" step="1">
+                <span class="field-help">常见 10kΩ</span>
+              </label>
+              <label class="field">
+                <span class="field-label">标称温度 T₀（K）</span>
+                <input type="number" id="ntc-t0" class="input" value="298.15" step="0.01">
+                <span class="field-help">25°C = 298.15 K</span>
+              </label>
+            </div>
+
+            <div class="settings-grid hidden" id="ntc-sh-params">
+              <label class="field">
+                <span class="field-label">A</span>
+                <input type="number" id="ntc-sh-a" class="input" value="0.001129148" step="1e-9">
+                <span class="field-help">Steinhart-Hart 系数，见手册或拟合</span>
+              </label>
+              <label class="field">
+                <span class="field-label">B</span>
+                <input type="number" id="ntc-sh-b" class="input" value="0.000234125" step="1e-9">
+                <span class="field-help">典型 10kΩ NTC 拟合值</span>
+              </label>
+              <label class="field">
+                <span class="field-label">C</span>
+                <input type="number" id="ntc-sh-c" class="input" value="0.000000087674" step="1e-12">
+                <span class="field-help">典型 10kΩ NTC 拟合值</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="calc-block">
+            <div class="calc-row">
+              <label class="field calc-input-field">
+                <span class="field-label">输入电阻值（Ω）</span>
+                <textarea id="ntc-input" class="input textarea-sm calc-multi" rows="3" placeholder="如 10000；可直接粘贴一列多行电阻数据"></textarea>
+              </label>
+              <div class="calc-result" id="ntc-result"></div>
+            </div>
+          </div>
+
+          <div class="batch-block">
+            <div class="batch-title">批量换算：从已导入数据选一列电阻值 → 生成新温度列</div>
+            <div class="batch-controls">
+              <label class="field">
+                <span class="field-label">输入列</span>
+                <select id="ntc-batch-col" class="input"></select>
+              </label>
+              <label class="field">
+                <span class="field-label">新列名</span>
+                <input type="text" id="ntc-batch-name" class="input">
+              </label>
+              <button class="btn btn-primary" id="ntc-batch-btn">生成新列</button>
+            </div>
+            <div class="batch-note" id="ntc-batch-note"></div>
+          </div>
+        </div>
+
+        <!-- ADC → 电压 -->
+        <div class="card fade-in calib-card hidden" id="calib-adc">
+          <div class="card-head">
+            <h2>ADC 原始读数 → 电压</h2>
+            <span class="card-hint">ADC 码值 → 电压（V）</span>
+          </div>
+          <div class="formula-line" id="adc-formula"></div>
+
+          <div class="calib-params">
+            <div class="settings-grid">
+              <label class="field">
+                <span class="field-label">分辨率位数</span>
+                <input type="number" id="adc-bits" class="input" value="12" min="1" max="32" step="1">
+                <span class="field-help">12 位 → 满量程 4095</span>
+              </label>
+              <label class="field">
+                <span class="field-label">参考电压 Vref（V）</span>
+                <input type="number" id="adc-vref" class="input" value="3.3" step="0.01">
+                <span class="field-help">如 3.3 / 5.0</span>
+              </label>
+              <label class="field">
+                <span class="field-label">分压系数 k</span>
+                <input type="number" id="adc-k" class="input" value="1" step="0.01">
+                <span class="field-help">电阻分压还原真实电压，如 2 = 分压一半</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="calc-block">
+            <div class="calc-row">
+              <label class="field calc-input-field">
+                <span class="field-label">输入 ADC 读数</span>
+                <textarea id="adc-input" class="input textarea-sm calc-multi" rows="3" placeholder="如 2048；可直接粘贴一列多行读数"></textarea>
+              </label>
+              <div class="calc-result" id="adc-result"></div>
+            </div>
+          </div>
+
+          <div class="batch-block">
+            <div class="batch-title">批量换算：从已导入数据选一列 ADC 读数 → 生成新电压列</div>
+            <div class="batch-controls">
+              <label class="field">
+                <span class="field-label">输入列</span>
+                <select id="adc-batch-col" class="input"></select>
+              </label>
+              <label class="field">
+                <span class="field-label">新列名</span>
+                <input type="text" id="adc-batch-name" class="input">
+              </label>
+              <button class="btn btn-primary" id="adc-batch-btn">生成新列</button>
+            </div>
+            <div class="batch-note" id="adc-batch-note"></div>
+          </div>
+        </div>
+
+        <!-- MQ 气体传感器 -->
+        <div class="card fade-in calib-card hidden" id="calib-mq">
+          <div class="card-head">
+            <h2>MQ 系列气体传感器 → 浓度比</h2>
+            <span class="card-hint">Rs / R₀ 比值 + ppm 近似（log-log 拟合）</span>
+          </div>
+          <div class="formula-line" id="mq-formula"></div>
+          <div class="formula-warn">ppm 为数据手册典型 log-log 拟合的近似值，仅作量级参考，正式测量请以标定为准。</div>
+
+          <div class="calib-params">
+            <div class="settings-grid">
+              <label class="field">
+                <span class="field-label">传感器型号</span>
+                <select id="mq-sensor" class="input">
+                  <option value="mq2" selected>MQ-2（烟雾 / LPG 段）</option>
+                  <option value="mq135">MQ-135（CO₂ 段）</option>
+                  <option value="custom">自定义拟合</option>
+                </select>
+                <span class="field-help">切换会填入典型拟合系数，可再手动改</span>
+              </label>
+              <label class="field">
+                <span class="field-label">洁净空气标定 R₀（Ω）</span>
+                <input type="number" id="mq-r0" class="input" value="9.83" step="0.01">
+                <span class="field-help">上电预热后在洁净空气中测得</span>
+              </label>
+              <label class="field">
+                <span class="field-label">拟合系数 a</span>
+                <input type="number" id="mq-a" class="input" value="1081.8" step="0.1">
+                <span class="field-help">ppm ≈ a × ratio^b</span>
+              </label>
+              <label class="field">
+                <span class="field-label">拟合系数 b</span>
+                <input type="number" id="mq-b" class="input" value="-2.51" step="0.001">
+                <span class="field-help">log-log 拟合斜率（负值）</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="calc-block">
+            <div class="calc-row">
+              <label class="field calc-input-field">
+                <span class="field-label">输入 Rs（Ω）</span>
+                <textarea id="mq-input" class="input textarea-sm calc-multi" rows="3" placeholder="如 9.83；可直接粘贴一列多行 Rs 数据"></textarea>
+              </label>
+              <div class="calc-result" id="mq-result"></div>
+            </div>
+          </div>
+
+          <div class="batch-block">
+            <div class="batch-title">批量换算：从已导入数据选一列 Rs → 生成比值列 + ppm 列</div>
+            <div class="batch-controls">
+              <label class="field">
+                <span class="field-label">输入列</span>
+                <select id="mq-batch-col" class="input"></select>
+              </label>
+              <label class="field">
+                <span class="field-label">新列名（ppm）</span>
+                <input type="text" id="mq-batch-name" class="input">
+              </label>
+              <button class="btn btn-primary" id="mq-batch-btn">生成新列</button>
+            </div>
+            <div class="batch-note" id="mq-batch-note"></div>
+          </div>
+        </div>
+
+        <!-- 换算记录 -->
+        <div class="card fade-in hidden" id="calib-log-card">
+          <div class="card-head">
+            <h2>换算记录</h2>
+            <span class="card-hint">本页执行过的换算，公式与参数可追溯</span>
+          </div>
+          <div class="calib-log" id="calib-log-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 页签四：智能分析 ================= -->
+    <section class="tab-panel" id="tab-analysis">
+      <div class="empty-state" id="analysis-empty">
+        <div class="empty-icon">🧠</div>
+        <div class="empty-title">还没有数据</div>
+        <div class="empty-desc">请先导入数据或加载示例数据</div>
+        <button class="btn btn-primary" data-goto="import">去导入数据</button>
+      </div>
+
+      <div class="hidden" id="analysis-content">
+        <div class="page-head">
+          <h1>智能分析</h1>
+          <p class="page-desc">统计指标、趋势图表与自动生成的分析结论。</p>
+        </div>
+
+        <h2 class="section-title">统计指标</h2>
+        <div class="stats-grid" id="stats-grid"></div>
+
+        <h2 class="section-title">趋势图表</h2>
+        <div class="card fade-in">
+          <div class="card-head">
+            <h2>数据曲线</h2>
+            <div class="chart-tools">
+              <div class="seg-control">
+                <button class="seg active" id="chart-line-btn">折线图</button>
+                <button class="seg" id="chart-scatter-btn">散点图</button>
+              </div>
+              <button class="btn btn-ghost btn-sm" id="chart-reset-btn">重置缩放</button>
+              <span class="replay-tools">
+                <button class="btn btn-ghost btn-sm" id="replay-btn">▶ 回放</button>
+                <select id="replay-speed" class="input replay-speed" title="回放速度">
+                  <option value="0.5">0.5×</option>
+                  <option value="1" selected>1×</option>
+                  <option value="2">2×</option>
+                  <option value="4">4×</option>
+                  <option value="0">瞬时</option>
+                </select>
+                <button class="btn btn-ghost btn-sm hidden" id="replay-reset-btn">⟲ 重置</button>
+              </span>
+            </div>
+          </div>
+          <div class="series-picker" id="series-picker"></div>
+          <div class="chart-wrap">
+            <canvas id="main-chart"></canvas>
+          </div>
+          <div class="chart-tip">滚轮或拖拽可缩放，拖动可平移</div>
+        </div>
+
+        <h2 class="section-title">分析结论</h2>
+        <div class="card fade-in conclusion-card">
+          <div class="card-head">
+            <h2>自动分析结论</h2>
+            <span class="card-hint">基于本地规则生成，可一键复制</span>
+          </div>
+          <div class="conclusion-body" id="conclusion-body"></div>
+          <div class="row-actions">
+            <button class="btn btn-outline" id="copy-conclusion-btn">复制结论</button>
+          </div>
+        </div>
+
+        <div class="card fade-in deep-card">
+          <div class="deep-head" id="deep-toggle">
+            <h2>深度分析（可选）</h2>
+            <span class="deep-toggle-hint">粘贴你自己的大模型 API Key，让模型做更开放的解读</span>
+            <span class="chevron">▾</span>
+          </div>
+          <div class="deep-body hidden" id="deep-body">
+            <p class="deep-note">此功能会把你当前的数据摘要发送到下方填写的接口，请确保接口可信。不填也能正常使用本工具的全部核心功能。</p>
+            <div class="settings-grid">
+              <label class="field">
+                <span class="field-label">API Key</span>
+                <input type="password" id="deep-key" class="input" placeholder="sk-...">
+              </label>
+              <label class="field">
+                <span class="field-label">接口地址</span>
+                <input type="text" id="deep-endpoint" class="input" value="https://api.openai.com/v1/chat/completions">
+              </label>
+              <label class="field">
+                <span class="field-label">模型名称</span>
+                <input type="text" id="deep-model" class="input" value="gpt-4o-mini">
+              </label>
+            </div>
+            <div class="row-actions">
+              <button class="btn btn-primary" id="deep-send-btn">发送给模型分析</button>
+            </div>
+            <div class="deep-result hidden" id="deep-result"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 页签五：滤波实验 ================= -->
+    <section class="tab-panel" id="tab-filter">
+      <div class="empty-state" id="filter-empty">
+        <div class="empty-icon">〰</div>
+        <div class="empty-title">还没有数据</div>
+        <div class="empty-desc">滤波实验需要先导入数据</div>
+        <button class="btn btn-primary" data-goto="import">去导入数据</button>
+      </div>
+
+      <div class="hidden" id="filter-content">
+        <div class="page-head">
+          <h1>滤波实验</h1>
+          <p class="page-desc">对选定通道做滤波处理并前后对比。原始曲线为浅色细线，滤波结果叠加显示，可勾选多种滤波器同时比较。</p>
+        </div>
+
+        <!-- 通道与滤波器 -->
+        <div class="card fade-in">
+          <div class="card-head">
+            <h2>通道与滤波器</h2>
+            <span class="card-hint">勾选启用，拖动滑块调参，图表与统计即时刷新</span>
+          </div>
+
+          <label class="field filter-channel-field">
+            <span class="field-label">处理通道</span>
+            <select id="filter-channel" class="input"></select>
+          </label>
+
+          <div class="filter-list">
+            <div class="filter-item">
+              <div class="fi-head">
+                <label class="fi-check"><input type="checkbox" id="f-ma-on"><span>滑动平均</span></label>
+                <span class="fi-val" id="f-ma-val">窗口 7</span>
+              </div>
+              <input type="range" id="f-ma-n" class="fi-slider" min="3" max="51" step="2" value="7">
+              <div class="fi-formula">yₙ = mean(xₙ₋w/₂ … xₙ+w/₂)（居中窗口，边界自动缩窗）</div>
+            </div>
+
+            <div class="filter-item">
+              <div class="fi-head">
+                <label class="fi-check"><input type="checkbox" id="f-med-on" checked><span>中值滤波</span></label>
+                <span class="fi-val" id="f-med-val">窗口 5</span>
+              </div>
+              <input type="range" id="f-med-n" class="fi-slider" min="3" max="51" step="2" value="5">
+              <div class="fi-formula">yₙ = median(xₙ₋w/₂ … xₙ+w/₂)（窗口内排序取中值，窗口取奇数）</div>
+            </div>
+
+            <div class="filter-item">
+              <div class="fi-head">
+                <label class="fi-check"><input type="checkbox" id="f-lp-on"><span>一阶低通（指数平滑）</span></label>
+                <span class="fi-val" id="f-lp-val">α = 0.30</span>
+              </div>
+              <input type="range" id="f-lp-alpha" class="fi-slider" min="1" max="99" step="1" value="30">
+              <div class="fi-formula">yₙ = α·xₙ + (1−α)·yₙ₋₁，y₀ = x₀（α 越大越跟手，越小越平滑）</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 对比图表 -->
+        <div class="card fade-in">
+          <div class="card-head">
+            <h2>滤波前后对比</h2>
+            <span class="card-hint">图例可点开关；原始曲线为浅色细线</span>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="filter-chart"></canvas>
+          </div>
+          <div class="chart-tip">浅色细线为原始数据，彩色实线为滤波结果</div>
+        </div>
+
+        <!-- 统计对比 -->
+        <div class="card fade-in">
+          <div class="card-head">
+            <h2>统计对比</h2>
+            <span class="card-hint">处理前后 标准差 / 极差 / 异常点数</span>
+          </div>
+          <div id="filter-stats"></div>
+        </div>
+
+        <!-- 频域分析 -->
+        <div class="card fade-in">
+          <div class="card-head">
+            <h2>频域分析（FFT 幅度谱）</h2>
+            <span class="card-hint">分析对象与「处理通道」一致，自实现基-2 Cooley-Tukey FFT</span>
+          </div>
+          <div class="chart-wrap chart-wrap-sm">
+            <canvas id="fft-chart"></canvas>
+          </div>
+          <div class="fft-notes" id="fft-notes"></div>
+        </div>
+
+        <!-- 应用滤波结果 -->
+        <div class="card fade-in">
+          <div class="card-head">
+            <h2>应用滤波结果</h2>
+            <span class="card-hint">追加为新列（保留原始数据），后续统计 / 图表 / 报告可用</span>
+          </div>
+          <div class="batch-controls">
+            <label class="field">
+              <span class="field-label">滤波结果</span>
+              <select id="filter-apply-sel" class="input"></select>
+            </label>
+            <label class="field">
+              <span class="field-label">新列名</span>
+              <input type="text" id="filter-apply-name" class="input">
+            </label>
+            <button class="btn btn-primary" id="filter-apply-btn">追加为新列</button>
+          </div>
+          <div class="batch-note" id="filter-apply-note"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 页签六：生成报告 ================= -->
+    <section class="tab-panel" id="tab-report">
+      <div class="empty-state" id="report-empty">
+        <div class="empty-icon">📄</div>
+        <div class="empty-title">还没有数据</div>
+        <div class="empty-desc">请先导入数据或加载示例数据</div>
+        <button class="btn btn-primary" data-goto="import">去导入数据</button>
+      </div>
+
+      <div class="hidden" id="report-content">
+        <div class="page-head">
+          <h1>生成报告</h1>
+          <p class="page-desc">一键生成实验报告 / 课设说明书文本，可复制或导出。</p>
+        </div>
+
+        <div class="card fade-in">
+          <div class="card-head">
+            <h2>报告信息</h2>
+            <span class="card-hint">可编辑，会自动填入报告</span>
+          </div>
+          <div class="settings-grid">
+            <label class="field">
+              <span class="field-label">实验名称</span>
+              <input type="text" id="report-title" class="input" placeholder="例如：温湿度传感器数据采集实验">
+            </label>
+            <label class="field field-wide">
+              <span class="field-label">实验目的</span>
+              <textarea id="report-purpose" class="input textarea-sm" rows="3" placeholder="例如：通过串口采集环境温湿度数据，验证传感器稳定性，分析数据波动与异常。"></textarea>
+            </label>
+          </div>
+        </div>
+
+        <div class="card fade-in">
+          <div class="card-head">
+            <h2>报告预览</h2>
+            <div class="chart-tools">
+              <button class="btn btn-primary" id="gen-report-btn">生成报告</button>
+              <button class="btn btn-outline" id="copy-report-btn">一键复制</button>
+              <button class="btn btn-outline" id="export-txt-btn">导出 .txt</button>
+              <button class="btn btn-outline" id="export-md-btn">导出 .md</button>
+              <button class="btn btn-outline" id="export-pdf-btn">导出 PDF</button>
+            </div>
+          </div>
+          <pre class="report-preview" id="report-preview">点击「生成报告」开始</pre>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <div id="print-root"></div>
+
+  <footer class="footer">
+    LabInsight · 数据仅在浏览器本地处理，不上传服务器
+  </footer>
+
+  <div class="toast-root" id="toast-root"></div>
+
+  <script src="sample-data.js"></script>
+  <script src="parser.js"></script>
+  <script src="analysis.js"></script>
+  <script src="calib.js"></script>
+  <script src="filter.js"></script>
+  <script src="fft.js"></script>
+  <script src="report.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

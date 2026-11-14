@@ -1,0 +1,24 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.log
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python
+__pycache__/
+*.pyc
+
+# 本地临时
+*.tmp
+.tmp/
+
+# 开发过程产物（不随仓库发布）
+src-v1-backup/
+docs/prompts/
+docs/作品帖-终稿.md

@@ -1,0 +1,46 @@
+[BOOT] sensor_reader v2.1.0  starting...
+[INFO] init I2C bus 1, addr 0x76 (BME280)
+[INFO] init ADC ch0, ch1          ts=0
+21:34:05.001 temp=25.32 humi=61.98 press=1012.3
+21:34:05.103 temp=25.31 humi=62.01 press=1012.4
+21:34:06.222 temp=25.34 humi=62.05 press=1012.4
+21:34:07.301 temp=25.37 humi=62.10 press=1012.5
+21:34:08.402 temp=25.40 humi=62.15 press=1012.5
+21:34:09.500 temp=25.43 humi=62.20 press=1012.6
+[WARN] skip bad frame: crc fail, raw=21:34:10.60 temp=25.x humi=62.2
+21:34:10.612 temp=25.45 humi=62.24 press=1012.6
+21:34:11.700 temp=25.44 humi=62.23 press=1012.6
+21:34:12.788 temp=25.47 humi=62.30 press=1012.7
+21:34:14.001 temp=25.52 humi=62.38 press=1012.8
+21:34:15.112 temp=25.56 humi=62.42 press=1012.8
+21:34:16.205 temp=25.61 humi=62.50 press=1012.9
+21:34:17.300 temp=25.66 humi=62.60 press=1013.0
+21:34:18.402 temp=25.70 humi=62.68 press=1013.0
+21:34:19.505 temp=25.75 humi=62.75 press=1013.1
+21:34:20.603 temp=25.80 humi=62.82 press=1013.2
+21:34:21.700 temp=25.84 humi=62.90 press=1013.2
+ garbage line from noisy serial
+21:34:22.801 temp=27.90 humi=63.10 press=1013.4
+21:34:23.900 temp=25.88 humi=62.95 press=1013.3
+21:34:25.001 temp=25.86 humi=62.92 press=1013.3
+21:34:26.100 temp=25.83 humi=62.88 press=1013.2
+21:34:27.205 temp=25.82 humi=62.85 press=1013.2
+21:34:28.301 temp=25.85 humi=62.90 press=1013.3
+[INFO] sensor stable, enter averaging
+21:34:29.400 temp=25.90 humi=62.98 press=1013.4
+21:34:30.502 temp=25.95 humi=63.05 press=1013.5
+21:34:31.603 temp=26.00 humi=63.15 press=1013.5
+21:34:32.701 temp=26.05 humi=63.22 press=1013.6
+21:34:33.800 temp=26.10 humi=63.30 press=1013.7
+21:34:34.901 temp=27.50 humi=64.00 press=1013.9
+21:34:35.002 temp=26.12 humi=63.35 press=1013.7
+21:34:36.100 temp=26.15 humi=63.40 press=1013.8
+21:34:37.200 temp=26.20 humi=63.48 press=1013.8
+21:34:38.301 temp=26.25 humi=63.55 press=1013.9
+21:34:39.400 temp=26.30 humi=63.62 press=1014.0
+21:34:40.503 temp=26.33 humi=63.70 press=1014.0
+21:34:41.600 temp=26.37 humi=63.78 press=1014.1
+21:34:42.702 temp=26.40 humi=63.85 press=1014.1
+21:34:43.800 temp=26.43 humi=63.92 press=1014.2
+21:34:44.901 temp=26.47 humi=64.00 press=1014.2
+[INFO] test complete, 40 frames logged
