@@ -5,16 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LabInsight · 实验数据分析助手</title>
 
-  <!-- 字体（可选，中文渲染更好看） -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- 字体：改用系统字体（Windows 微软雅黑 / macOS 苹方 / 其他 Noto 兜底），不再依赖外部 Google Fonts，断网也能正常显示 -->
 
-  <!-- 依赖库（CDN） -->
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+  <!-- 依赖库（全部本地 vendor/，离线可用，双击即用） -->
+  <script src="vendor/papaparse.min.js"></script>
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script src="vendor/chart.umd.min.js"></script>
+  <script src="vendor/chartjs-plugin-zoom.min.js"></script>
+  <script src="vendor/docx.umd.js"></script>
 
   <link rel="stylesheet" href="style.css">
 </head>
@@ -27,13 +25,14 @@
         <span class="brand-name">LabInsight</span>
         <span class="brand-sub">实验数据分析助手</span>
       </div>
-      <nav class="tabs" id="main-tabs">
-        <button class="tab active" data-tab="import">导入数据</button>
-        <button class="tab" data-tab="preview">数据预览</button>
-        <button class="tab" data-tab="calib">校准换算</button>
-        <button class="tab" data-tab="analysis">智能分析</button>
-        <button class="tab" data-tab="filter">滤波实验</button>
-        <button class="tab" data-tab="report">生成报告</button>
+      <nav class="tabs" id="main-tabs" role="tablist" aria-label="功能页签">
+        <button class="tab active" data-tab="import" role="tab" aria-selected="true" aria-controls="tab-import">导入数据</button>
+        <button class="tab" data-tab="preview" role="tab" aria-selected="false" aria-controls="tab-preview">数据预览</button>
+        <button class="tab" data-tab="calib" role="tab" aria-selected="false" aria-controls="tab-calib">校准换算</button>
+        <button class="tab" data-tab="toolbox" role="tab" aria-selected="false" aria-controls="tab-toolbox">工具箱</button>
+        <button class="tab" data-tab="analysis" role="tab" aria-selected="false" aria-controls="tab-analysis">智能分析</button>
+        <button class="tab" data-tab="filter" role="tab" aria-selected="false" aria-controls="tab-filter">滤波实验</button>
+        <button class="tab" data-tab="report" role="tab" aria-selected="false" aria-controls="tab-report">生成报告</button>
       </nav>
     </div>
   </header>
@@ -41,11 +40,29 @@
   <main class="container">
 
     <!-- ================= 页签一：导入数据 ================= -->
-    <section class="tab-panel active" id="tab-import">
+    <section class="tab-panel active" id="tab-import" role="tabpanel">
       <div class="page-head">
         <h1>导入数据</h1>
         <p class="page-desc">上传 CSV / Excel 文件，或直接粘贴串口日志。所有数据仅在浏览器本地处理，不会上传到任何服务器。</p>
       </div>
+
+      <!-- 本地项目恢复横幅 -->
+      <div class="project-banner hidden" id="project-banner">
+        <span class="pb-icon">💾</span>
+        <span class="pb-text"><b>检测到上次的项目</b><span id="project-banner-desc"></span></span>
+        <span class="pb-actions">
+          <button class="btn btn-primary btn-sm" id="project-restore-btn">恢复项目</button>
+          <button class="btn btn-ghost btn-sm" id="project-dismiss-btn">不用了</button>
+        </span>
+      </div>
+
+      <!-- 三步引导 -->
+      <div class="guide-steps" id="guide-steps">
+        <span class="g-step"><b class="g-num">①</b> 导入数据（或点下方示例）</span>
+        <span class="g-step"><b class="g-num">②</b> 预览与分析</span>
+        <span class="g-step"><b class="g-num">③</b> 一键生成报告带走</span>
+      </div>
+      <button class="btn btn-primary hidden" id="guide-next-btn">下一步：查看数据预览 →</button>
 
       <!-- 上传文件 -->
       <div class="card fade-in">
@@ -78,6 +95,54 @@
           <button class="btn btn-primary" id="use-paste-btn">使用粘贴内容</button>
           <button class="btn btn-ghost" id="clear-paste-btn">清空</button>
           <span class="char-count" id="paste-char-count">0 字符</span>
+        </div>
+      </div>
+
+      <!-- 实时串口采集（v2.3） -->
+      <div class="card fade-in" id="serial-card">
+        <div class="card-head">
+          <h2>实时串口采集</h2>
+          <span class="card-hint">浏览器直连开发板，边采边看曲线，停止后自动进入分析</span>
+        </div>
+        <div class="row-actions" id="serial-idle-row">
+          <label class="field serial-baud-field">
+            <span class="field-label">波特率</span>
+            <select id="serial-baud" class="input">
+              <option value="9600" selected>9600</option>
+              <option value="19200">19200</option>
+              <option value="38400">38400</option>
+              <option value="57600">57600</option>
+              <option value="115200">115200</option>
+            </select>
+          </label>
+          <button class="btn btn-primary" id="serial-connect-btn">连接设备并开始采集</button>
+          <button class="btn btn-outline" id="serial-sim-btn" title="无硬件时演示：软件生成带毛刺的数据流，效果与真串口一致">模拟串口数据</button>
+        </div>
+        <div class="serial-note" id="serial-note">需要 Chrome / Edge 桌面版浏览器；数据在本机浏览器内采集，不上传服务器。没有硬件时点「模拟串口数据」可体验完整流程。</div>
+        <div class="hidden" id="serial-running-row">
+          <div class="serial-status">
+            <span class="serial-dot" id="serial-dot"></span>
+            <span id="serial-status-text"></span>
+            <span class="serial-count" id="serial-count">已收到 0 行</span>
+            <span class="serial-duration" id="serial-duration">时长 00:00</span>
+          </div>
+          <div class="serial-metrics" id="serial-metrics"></div>
+          <div class="serial-mark-row">
+            <input type="text" id="serial-mark-label" class="input" placeholder="标记说明，如：更换探头（可选）">
+            <button class="btn btn-outline btn-sm" id="serial-mark-btn" title="采集时按空格键也可打标记">＋ 标记</button>
+          </div>
+          <div class="serial-send-row">
+            <input type="text" id="serial-send-input" class="input" placeholder="向开发板发送指令，如 START / READ（仅真实串口生效）">
+            <label class="serial-nl"><input type="checkbox" id="serial-send-nl" checked> 末尾换行</label>
+            <button class="btn btn-outline btn-sm" id="serial-send-btn">发送</button>
+          </div>
+          <div class="chart-wrap chart-wrap-sm serial-live-chart">
+            <canvas id="serial-chart"></canvas>
+          </div>
+          <div class="row-actions">
+            <button class="btn btn-primary" id="serial-stop-btn">停止并进入分析</button>
+            <button class="btn btn-ghost" id="serial-cancel-btn">取消（丢弃数据）</button>
+          </div>
         </div>
       </div>
 
@@ -127,13 +192,18 @@
         </div>
         <div class="row-actions">
           <button class="btn btn-primary btn-lg" id="parse-btn">开始解析</button>
+          <button class="btn btn-outline" id="merge-file-btn" title="把另一份同结构的数据按行追加到当前数据后（多次采集合并成一张表）">合并数据</button>
+          <input type="file" id="merge-file-input" accept=".csv,.txt,.log,.xlsx,.xls" hidden>
+          <button class="btn btn-outline" id="project-export-btn" title="把当前数据与设置存成 JSON，可换设备导入">导出项目 JSON</button>
+          <button class="btn btn-outline" id="project-import-btn" title="从项目 JSON 恢复数据与设置">导入项目 JSON</button>
+          <input type="file" id="project-import-input" accept=".json,application/json" hidden>
         </div>
         <div class="parse-feedback hidden" id="parse-feedback"></div>
       </div>
     </section>
 
     <!-- ================= 页签二：数据预览 ================= -->
-    <section class="tab-panel" id="tab-preview">
+    <section class="tab-panel" id="tab-preview" role="tabpanel">
       <div class="empty-state" id="preview-empty">
         <div class="empty-icon">📊</div>
         <div class="empty-title">还没有数据</div>
@@ -152,9 +222,13 @@
         <div class="card fade-in">
           <div class="card-head">
             <h2>数据表</h2>
-            <div class="seg-control" id="view-toggle">
-              <button class="seg active" data-view="clean">清洗后</button>
-              <button class="seg" data-view="raw">原始文本对照</button>
+            <div class="chart-tools">
+              <div class="seg-control" id="view-toggle">
+                <button class="seg active" data-view="clean">清洗后</button>
+                <button class="seg" data-view="raw">原始文本对照</button>
+              </div>
+              <button class="btn btn-ghost btn-sm" id="export-csv-btn" title="导出清洗后的全量数据为 CSV（UTF-8 带 BOM，Excel 可直接打开）">导出 CSV</button>
+              <button class="btn btn-ghost btn-sm" id="export-xlsx-btn" title="导出清洗后的全量数据为 Excel 工作簿">导出 Excel</button>
             </div>
           </div>
           <div class="legend-row" id="table-legend"></div>
@@ -176,11 +250,26 @@
           </div>
           <div class="sampling-body" id="sampling-body"></div>
         </div>
+
+        <!-- 数据体检（v2.2） -->
+        <div class="card fade-in" id="health-card">
+          <div class="card-head">
+            <h2>数据体检</h2>
+            <span class="card-hint" id="health-hint">缺失值、重复行与异常通道检查</span>
+          </div>
+          <div class="health-body" id="health-body"></div>
+          <div class="row-actions" id="health-actions">
+            <button class="btn btn-outline" id="health-drop-missing-btn" title="删除任一数值列缺失的行">删除缺失行</button>
+            <button class="btn btn-outline" id="health-dedupe-btn" title="删除与前面行完全相同的行">去除重复行</button>
+            <button class="btn btn-ghost btn-sm hidden" id="health-undo-btn">⟲ 撤销上一步</button>
+            <span class="health-note" id="health-note"></span>
+          </div>
+        </div>
       </div>
     </section>
 
     <!-- ================= 页签三：校准换算 ================= -->
-    <section class="tab-panel" id="tab-calib">
+    <section class="tab-panel" id="tab-calib" role="tabpanel">
       <div id="calib-content">
         <div class="page-head">
           <h1>校准换算</h1>
@@ -194,6 +283,7 @@
             <button class="seg active" data-mode="ntc">NTC 热敏电阻 → 温度</button>
             <button class="seg" data-mode="adc">ADC 读数 → 电压</button>
             <button class="seg" data-mode="mq">MQ 气体 → 浓度比</button>
+            <button class="seg" data-mode="poly">多项式换算 y = ax + b</button>
           </div>
         </div>
 
@@ -226,6 +316,18 @@
                 <span class="field-label">标称温度 T₀（K）</span>
                 <input type="number" id="ntc-t0" class="input" value="298.15" step="0.01">
                 <span class="field-help">25°C = 298.15 K</span>
+              </label>
+              <label class="field">
+                <span class="field-label">型号预设</span>
+                <select id="ntc-preset" class="input">
+                  <option value="">— 手动输入 —</option>
+                  <option value="3950">B=3950 · 10kΩ（MF52 / MF58 常见）</option>
+                  <option value="3435">B=3435 · 10kΩ（MF52 常见）</option>
+                  <option value="3380">B=3380 · 10kΩ（SMD 常见）</option>
+                  <option value="4050">B=4050 · 10kΩ（MF58 常见）</option>
+                  <option value="3977">B=3977 · 100kΩ（100k 型号）</option>
+                </select>
+                <span class="field-help">选预设自动填 B / R₀，省查手册</span>
               </label>
             </div>
 
@@ -272,6 +374,52 @@
               <button class="btn btn-primary" id="ntc-batch-btn">生成新列</button>
             </div>
             <div class="batch-note" id="ntc-batch-note"></div>
+          </div>
+
+          <div class="batch-block">
+            <div class="batch-title">R-T 标定图：实测点 vs 理论曲线</div>
+            <div class="batch-controls">
+              <label class="field">
+                <span class="field-label">电阻列（横轴）</span>
+                <select id="ntc-theory-x-col" class="input"></select>
+              </label>
+              <label class="field">
+                <span class="field-label">实测温度列（纵轴散点）</span>
+                <select id="ntc-theory-y-col" class="input"></select>
+              </label>
+              <button class="btn btn-primary" id="ntc-theory-btn">画标定图</button>
+            </div>
+            <div class="chart-wrap ntc-theory-wrap hidden" id="ntc-theory-wrap">
+              <canvas id="ntc-theory-chart"></canvas>
+            </div>
+            <div class="batch-note" id="ntc-theory-note">散点用实测温度列（通常是批量换算生成的温度列），理论曲线用当前 B / R₀ / T₀ 参数画 R-T 特性；两条线贴合程度即换算参数与实测的偏差。</div>
+          </div>
+
+          <div class="batch-block" id="ntc-twopoint-block">
+            <div class="batch-title">两点标定反算 B 值：填两组「标准温度 → 实测电阻」自动求 B / R₀</div>
+            <div class="settings-grid ntc-2pt-grid">
+              <label class="field">
+                <span class="field-label">温度 T₁（°C）</span>
+                <input type="number" id="ntc-c1-t" class="input" value="0" step="0.1">
+              </label>
+              <label class="field">
+                <span class="field-label">电阻 R₁（Ω）</span>
+                <input type="number" id="ntc-c1-r" class="input" value="32650" step="1">
+              </label>
+              <label class="field">
+                <span class="field-label">温度 T₂（°C）</span>
+                <input type="number" id="ntc-c2-t" class="input" value="100" step="0.1">
+              </label>
+              <label class="field">
+                <span class="field-label">电阻 R₂（Ω）</span>
+                <input type="number" id="ntc-c2-r" class="input" value="680" step="1">
+              </label>
+            </div>
+            <div class="row-actions">
+              <button class="btn btn-primary btn-sm" id="ntc-2pt-calc-btn">反算 B / R₀ 并回填</button>
+              <button class="btn btn-outline btn-sm" id="ntc-2pt-from-theory-btn" title="用上方标定图选中的电阻列与温度列，取首尾两个实测点代入">取标定图首尾两点</button>
+              <span class="batch-note" id="ntc-2pt-note">公式：B = ln(R₁/R₂) / (1/T₁ − 1/T₂)，T 取开氏温度；解出 B 后以 T₁ 为标称点回填 R₀。两点法假设 B 在区间内恒定。</span>
+            </div>
           </div>
         </div>
 
@@ -395,6 +543,95 @@
           </div>
         </div>
 
+        <!-- 多项式换算（v2.3） -->
+        <div class="card fade-in calib-card hidden" id="calib-poly">
+          <div class="card-head">
+            <h2>自定义多项式换算</h2>
+            <span class="card-hint">y = a·x + b 或 y = a·x² + b·x + c，系数自己定</span>
+          </div>
+          <div class="formula-line" id="poly-formula"></div>
+          <div class="formula-warn">多项式系数来自你自己的标定数据（可用下方线性拟合求出一次项系数），公式会写进换算记录。</div>
+
+          <div class="calib-params">
+            <div class="seg-control" id="poly-deg">
+              <button class="seg active" data-deg="1">一次 y = a·x + b</button>
+              <button class="seg" data-deg="2">二次 y = a·x² + b·x + c</button>
+            </div>
+            <div class="settings-grid">
+              <label class="field">
+                <span class="field-label">系数 a（一次项 / 二次项）</span>
+                <input type="number" id="poly-a" class="input" value="1" step="0.0001">
+                <span class="field-help" id="poly-a-help">一次换算时为斜率（灵敏度）</span>
+              </label>
+              <label class="field">
+                <span class="field-label">系数 b</span>
+                <input type="number" id="poly-b" class="input" value="0" step="0.0001">
+                <span class="field-help">一次为截距；二次为一次项系数</span>
+              </label>
+              <label class="field hidden" id="poly-c-field">
+                <span class="field-label">系数 c（常数项）</span>
+                <input type="number" id="poly-c" class="input" value="0" step="0.0001">
+                <span class="field-help">仅二次换算使用</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="calc-block">
+            <div class="calc-row">
+              <label class="field calc-input-field">
+                <span class="field-label">输入值 x（可粘贴一列多行）</span>
+                <textarea id="poly-input" class="input textarea-sm calc-multi" rows="3" placeholder="如 512；可直接粘贴一列多行数据"></textarea>
+              </label>
+              <div class="calc-result" id="poly-result"></div>
+            </div>
+          </div>
+
+          <div class="batch-block">
+            <div class="batch-title">批量换算：从已导入数据选一列 → 生成新列</div>
+            <div class="batch-controls">
+              <label class="field">
+                <span class="field-label">输入列</span>
+                <select id="poly-batch-col" class="input"></select>
+              </label>
+              <label class="field">
+                <span class="field-label">新列名</span>
+                <input type="text" id="poly-batch-name" class="input">
+              </label>
+              <button class="btn btn-primary" id="poly-batch-btn">生成新列</button>
+            </div>
+            <div class="batch-note" id="poly-batch-note"></div>
+          </div>
+        </div>
+
+        <!-- 线性拟合（v2.3） -->
+        <div class="card fade-in calib-card" id="calib-fit">
+          <div class="card-head">
+            <h2>线性拟合 y = k·x + b</h2>
+            <span class="card-hint">最小二乘法，传感器标定求灵敏度常用</span>
+          </div>
+          <div class="formula-line" id="fit-formula">选好两列后点「开始拟合」，公式与 R² 会显示在这里</div>
+          <div class="batch-controls">
+            <label class="field">
+              <span class="field-label">自变量 X 列</span>
+              <select id="fit-x-col" class="input"></select>
+            </label>
+            <label class="field">
+              <span class="field-label">因变量 Y 列</span>
+              <select id="fit-y-col" class="input"></select>
+            </label>
+            <button class="btn btn-primary" id="fit-run-btn">开始拟合</button>
+          </div>
+          <div class="batch-note">X 通常取输入激励（如电压、设定温度），Y 取传感器输出读数；两列按行取共同有效值。拟合结果同时写入下方「换算记录」。</div>
+          <div class="calc-result hidden" id="fit-result"></div>
+
+          <div class="batch-title">标定评估：灵敏度 · 零点 · 线性度 · 迟滞</div>
+          <div class="batch-controls">
+            <button class="btn btn-primary" id="eval-run-btn">评估标定质量</button>
+          </div>
+          <div class="batch-note">用上方同一组 X / Y 列：灵敏度 = 拟合斜率 k，零点输出 = 截距 b，线性度 = 最大残差 / 输出量程，迟滞 = 前后半程各自拟合的斜率差异（按行序前半 / 后半，简版判定）。</div>
+          <div class="calc-result hidden" id="eval-result"></div>
+        </div>
+
         <!-- 换算记录 -->
         <div class="card fade-in hidden" id="calib-log-card">
           <div class="card-head">
@@ -407,7 +644,112 @@
     </section>
 
     <!-- ================= 页签四：智能分析 ================= -->
-    <section class="tab-panel" id="tab-analysis">
+    <!-- ================= 页签：工具箱 ================= -->
+    <section class="tab-panel" id="tab-toolbox" role="tabpanel">
+      <div class="page-head">
+        <h1>工具箱</h1>
+        <p class="page-desc">面向嵌入式实验的工程小工具：把标定结果生成可烧进芯片的 C 代码、算定时器分频、配分压电阻、解码串口字节流。全部本地计算。</p>
+      </div>
+
+      <!-- 1. 生成嵌入式 C 代码 -->
+      <div class="card fade-in">
+        <div class="card-head">
+          <h2>生成嵌入式 C 代码</h2>
+          <span class="card-hint">把当前换算参数转成可直接用的 C 函数 / 查表数组</span>
+        </div>
+        <div class="row-actions">
+          <label class="field serial-baud-field">
+            <span class="field-label">来源</span>
+            <select id="cg-type" class="input">
+              <option value="ntc">NTC 热敏电阻 → 温度</option>
+              <option value="adc">ADC 读数 → 电压</option>
+              <option value="poly">多项式换算 y = f(x)</option>
+            </select>
+          </label>
+          <button class="btn btn-primary" id="cg-gen-btn">生成 C 代码</button>
+          <button class="btn btn-outline" id="cg-copy-btn">复制</button>
+          <button class="btn btn-outline" id="cg-dl-btn" title="下载为 .h 头文件，可直接放进工程编译">下载 .h</button>
+          <button class="btn btn-outline" id="cg-ino-btn" title="生成可直接烧录的 Arduino 完整示例（setup + loop + 换算函数）">下载 Arduino .ino</button>
+        </div>
+        <pre class="code-out" id="cg-output">点「生成 C 代码」，按上面选择的来源，读取校准页当前参数生成代码。</pre>
+      </div>
+
+      <!-- 2. 采样率 / 定时器助手 -->
+      <div class="card fade-in">
+        <div class="card-head">
+          <h2>采样率 / 定时器配置助手</h2>
+          <span class="card-hint">输入目标采样率，算 STM32 的 PSC / ARR 或 Arduino 定时器</span>
+        </div>
+        <div class="settings-grid">
+          <label class="field">
+            <span class="field-label">目标采样率（Hz）</span>
+            <input type="number" id="tm-rate" class="input" value="100" step="1" min="0.1">
+          </label>
+          <label class="field">
+            <span class="field-label">定时器时钟（MHz）</span>
+            <input type="number" id="tm-clk" class="input" value="72" step="1">
+            <span class="field-help">STM32F1 常见 72，F4 常见 84</span>
+          </label>
+          <label class="field">
+            <span class="field-label">平台</span>
+            <select id="tm-mcu" class="input">
+              <option value="stm32">STM32（PSC / ARR）</option>
+              <option value="arduino">Arduino UNO（16MHz 定时器）</option>
+            </select>
+          </label>
+        </div>
+        <div class="row-actions">
+          <button class="btn btn-primary" id="tm-calc-btn">计算配置</button>
+        </div>
+        <pre class="code-out" id="tm-output">填入目标采样率后点「计算配置」。</pre>
+      </div>
+
+      <!-- 3. 分压电阻 / ADC 位数助手 -->
+      <div class="card fade-in">
+        <div class="card-head">
+          <h2>分压电阻 / ADC 位数助手</h2>
+          <span class="card-hint">给定信号范围与参考电压，算分压比、推荐标准电阻、判断量程</span>
+        </div>
+        <div class="settings-grid">
+          <label class="field">
+            <span class="field-label">信号最大电压 Vin（V）</span>
+            <input type="number" id="dv-vin" class="input" value="5" step="0.1">
+          </label>
+          <label class="field">
+            <span class="field-label">ADC 参考电压 Vref（V）</span>
+            <input type="number" id="dv-vref" class="input" value="3.3" step="0.1">
+          </label>
+          <label class="field">
+            <span class="field-label">ADC 位数</span>
+            <input type="number" id="dv-bits" class="input" value="12" step="1" min="6" max="24">
+          </label>
+        </div>
+        <div class="row-actions">
+          <button class="btn btn-primary" id="dv-calc-btn">计算</button>
+        </div>
+        <pre class="code-out" id="dv-output">填入信号范围后点「计算」。</pre>
+      </div>
+
+      <!-- 4. 串口原始数据解码 -->
+      <div class="card fade-in">
+        <div class="card-head">
+          <h2>串口原始数据解码</h2>
+          <span class="card-hint">把 hex 字节流解成 ASCII / 整数（大端）</span>
+        </div>
+        <label class="field field-wide">
+          <span class="field-label">HEX 字节流</span>
+          <textarea id="hx-input" class="input textarea-sm" rows="2" placeholder="例如：48 65 6C 6C 6F 或 0x01,0x02,0x03"></textarea>
+        </label>
+        <div class="row-actions">
+          <button class="btn btn-outline" id="hx-ascii-btn">→ ASCII</button>
+          <button class="btn btn-outline" id="hx-u16-btn">→ uint16（大端）</button>
+          <button class="btn btn-outline" id="hx-i16-btn">→ int16（大端）</button>
+        </div>
+        <pre class="code-out" id="hx-output">粘贴 hex 字节流，选择解码方式。</pre>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-analysis" role="tabpanel">
       <div class="empty-state" id="analysis-empty">
         <div class="empty-icon">🧠</div>
         <div class="empty-title">还没有数据</div>
@@ -423,6 +765,109 @@
 
         <h2 class="section-title">统计指标</h2>
         <div class="stats-grid" id="stats-grid"></div>
+        <div class="outlier-method-row">
+          <span class="field-label">异常判定口径</span>
+          <div class="seg-group" id="outlier-method">
+            <button type="button" class="seg active" data-method="mad" title="对毛刺不敏感：稳健 z 分数（基于中位数绝对偏差）> 3.5 或偏离中位数超 4×MAD">MAD 稳健</button>
+            <button type="button" class="seg" data-method="sigma3" title="经典口径：偏离均值超过 3 倍标准差（受毛刺影响较大）">3σ</button>
+            <button type="button" class="seg" data-method="iqr" title="箱线图口径：超出 Q1 − 1.5×IQR ~ Q3 + 1.5×IQR 范围">IQR</button>
+          </div>
+          <span class="outlier-hint">图中红色虚线为当前口径上下限</span>
+        </div>
+        <div class="stats-caliber-note" id="stats-caliber-note">统计口径：标准差为样本标准差（n-1）；漂移量 = 末值 − 初值；极差 = 最大值 − 最小值；均值 = 算术平均；异常点判定：<span id="caliber-outlier">稳健 z 分数（基于 MAD）&gt; 3.5 或偏离中位数超 4×MAD</span>；置信区间按 t 分布（自由度 n-1，n&gt;31 时近似 1.96）</div>
+
+        <!-- 不确定度计算（v2.6） -->
+        <div class="card fade-in" id="uncert-card">
+          <div class="card-head">
+            <h2>测量不确定度</h2>
+            <span class="card-hint">A 类（重复测量）+ B 类（仪器精度）→ 合成 → 扩展</span>
+          </div>
+          <div class="settings-grid">
+            <label class="field">
+              <span class="field-label">测量列（作重复测量序列）</span>
+              <select id="unc-col" class="input"></select>
+            </label>
+            <label class="field">
+              <span class="field-label">B 类：仪器最大允差 a（同单位）</span>
+              <input type="number" id="unc-b" class="input" value="0" step="0.01" min="0">
+              <span class="field-help">按均匀分布，uB = a / √3；无仪器参数可填 0</span>
+            </label>
+            <label class="field">
+              <span class="field-label">包含因子 k</span>
+              <input type="number" id="unc-k" class="input" value="2" step="0.1" min="1">
+              <span class="field-help">常取 2（约 95% 置信）</span>
+            </label>
+          </div>
+          <div class="row-actions">
+            <button class="btn btn-primary" id="unc-calc-btn">计算不确定度</button>
+          </div>
+          <pre class="code-out" id="unc-output">选一列作为重复测量序列，点「计算不确定度」。</pre>
+        </div>
+
+        <!-- 通道相关性（v2.2） -->
+        <div class="card fade-in" id="corr-card">
+          <div class="card-head">
+            <h2>通道相关性</h2>
+            <span class="card-hint">Pearson 线性相关系数 r（-1 ~ 1），两列逐行取共同有效值</span>
+          </div>
+          <div class="corr-body" id="corr-body"></div>
+          <div class="corr-legend">|r| ≥ 0.7 强线性相关 · 0.4 ~ 0.7 中等 · &lt; 0.4 弱；r 只反映线性关系，不代表因果。</div>
+        </div>
+
+        <!-- 区间统计（v2.4）：框选/滚轮缩放图表后自动按当前范围重算 -->
+        <div class="card fade-in hidden" id="range-card">
+          <div class="card-head">
+            <h2>区间统计</h2>
+            <span class="card-hint" id="range-desc">—</span>
+            <button class="btn btn-ghost btn-sm" id="range-clear-btn">清除区间</button>
+          </div>
+          <div class="range-body" id="range-body"></div>
+          <div class="corr-legend">在上方图表拖框或滚轮缩放，统计卡自动切到当前可见区间；点「重置缩放」恢复全量。</div>
+        </div>
+
+        <!-- 取值分布（v2.4）：每列直方图 -->
+        <div class="card fade-in" id="hist-card">
+          <div class="card-head">
+            <h2>取值分布</h2>
+            <span class="card-hint">各通道直方图（15 桶），看分布形状：集中 / 双峰 / 长尾</span>
+            <label class="field hist-col-field">
+              <select id="hist-col" class="input input-sm"></select>
+            </label>
+          </div>
+          <div class="chart-wrap hist-wrap">
+            <canvas id="hist-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- 多组并列对比（v2.8）：重复实验取均值 ± 标准差带 -->
+        <div class="card fade-in" id="compare-card">
+          <div class="card-head">
+            <h2>多组并列对比</h2>
+            <span class="card-hint">重复实验 / A-B 对照：追加对比组，按采样序号对齐，画均值 ± 标准差带</span>
+          </div>
+          <div class="compare-add">
+            <label class="field field-wide">
+              <span class="field-label">第二组数据 <span class="field-opt">粘贴串口日志或 CSV，列名需与当前数据一致</span></span>
+              <textarea id="compare-paste" class="input textarea-sm" rows="4" placeholder="粘贴第二组数据，例如同一实验再采一次的串口日志……"></textarea>
+            </label>
+            <div class="row-actions">
+              <button class="btn btn-primary btn-sm" id="compare-add-btn">添加为对比组</button>
+              <button class="btn btn-outline btn-sm" id="compare-file-btn">从文件选择（CSV / Excel）</button>
+              <input type="file" id="compare-file-input" accept=".csv,.txt,.log,.xlsx,.xls" hidden>
+              <button class="btn btn-ghost btn-sm" id="compare-clear-btn">清空对比组</button>
+              <label class="field compare-col-field">
+                <span class="field-label">对比通道</span>
+                <select id="compare-col" class="input input-sm"></select>
+              </label>
+            </div>
+            <div class="compare-groups" id="compare-groups"></div>
+          </div>
+          <div class="chart-wrap compare-wrap hidden" id="compare-wrap">
+            <canvas id="compare-chart"></canvas>
+          </div>
+          <div class="compare-table" id="compare-table"></div>
+          <div class="corr-legend">第一组为当前数据（A 组）；各组按第 1、2、3…个采样点对齐（重复实验通常采样率相同）；某组点数不足时该点跳过不计入均值。</div>
+        </div>
 
         <h2 class="section-title">趋势图表</h2>
         <div class="card fade-in">
@@ -434,6 +879,11 @@
                 <button class="seg" id="chart-scatter-btn">散点图</button>
               </div>
               <button class="btn btn-ghost btn-sm" id="chart-reset-btn">重置缩放</button>
+              <button class="btn btn-ghost btn-sm" id="export-chart-png-btn">导出 PNG</button>
+              <button class="btn btn-ghost btn-sm" id="export-chart-svg-btn">导出 SVG</button>
+              <label class="chart-toggle" title="按测量不确定度 U 给每个数据点加误差棒">
+                <input type="checkbox" id="chart-errbar-toggle" checked> 误差棒
+              </label>
               <span class="replay-tools">
                 <button class="btn btn-ghost btn-sm" id="replay-btn">▶ 回放</button>
                 <select id="replay-speed" class="input replay-speed" title="回放速度">
@@ -448,10 +898,31 @@
             </div>
           </div>
           <div class="series-picker" id="series-picker"></div>
+          <div class="chart-downsample-note hidden" id="chart-downsample-note"></div>
           <div class="chart-wrap">
             <canvas id="main-chart"></canvas>
           </div>
-          <div class="chart-tip">滚轮或拖拽可缩放，拖动可平移</div>
+          <div class="chart-tip">滚轮或拖拽可缩放，拖动可平移 · 在图上单击可给该时刻添加事件标注</div>
+        </div>
+
+        <div class="card fade-in" id="events-card">
+          <div class="card-head">
+            <h2>实验事件标注</h2>
+            <span class="card-hint">在趋势图上单击定位时刻，填描述后添加；标记会画在图上并写进报告</span>
+          </div>
+          <div class="events-add">
+            <label class="field field-inline">
+              <span class="field-label">时刻</span>
+              <input type="text" id="event-x" class="input" placeholder="点击图表自动填入">
+            </label>
+            <label class="field field-inline events-label-field">
+              <span class="field-label">描述</span>
+              <input type="text" id="event-label" class="input" placeholder="例如：开始加热 / 此时更换探头">
+            </label>
+            <button class="btn btn-primary btn-sm" id="event-add-btn">添加事件</button>
+          </div>
+          <div class="events-list" id="events-list"></div>
+          <div class="card-hint" id="event-hint"></div>
         </div>
 
         <h2 class="section-title">分析结论</h2>
@@ -466,7 +937,7 @@
           </div>
         </div>
 
-        <div class="card fade-in deep-card">
+        <div class="card fade-in deep-card" id="deep-card">
           <div class="deep-head" id="deep-toggle">
             <h2>深度分析（可选）</h2>
             <span class="deep-toggle-hint">粘贴你自己的大模型 API Key，让模型做更开放的解读</span>
@@ -498,7 +969,7 @@
     </section>
 
     <!-- ================= 页签五：滤波实验 ================= -->
-    <section class="tab-panel" id="tab-filter">
+    <section class="tab-panel" id="tab-filter" role="tabpanel">
       <div class="empty-state" id="filter-empty">
         <div class="empty-icon">〰</div>
         <div class="empty-title">还没有数据</div>
@@ -559,6 +1030,7 @@
           <div class="card-head">
             <h2>滤波前后对比</h2>
             <span class="card-hint">图例可点开关；原始曲线为浅色细线</span>
+            <button class="btn btn-ghost btn-sm" id="export-filter-png-btn">导出 PNG</button>
           </div>
           <div class="chart-wrap">
             <canvas id="filter-chart"></canvas>
@@ -580,7 +1052,12 @@
           <div class="card-head">
             <h2>频域分析（FFT 幅度谱）</h2>
             <span class="card-hint">分析对象与「处理通道」一致，自实现基-2 Cooley-Tukey FFT</span>
+            <button class="btn btn-ghost btn-sm" id="export-fft-png-btn">导出 PNG</button>
           </div>
+          <label class="fi-check fft-resample-check">
+            <input type="checkbox" id="fft-resample-on" checked>
+            <span>重采样到均匀间隔后再分析（推荐：采样间隔不均匀时线性插值到均匀网格，结果更严谨）</span>
+          </label>
           <div class="chart-wrap chart-wrap-sm">
             <canvas id="fft-chart"></canvas>
           </div>
@@ -610,7 +1087,7 @@
     </section>
 
     <!-- ================= 页签六：生成报告 ================= -->
-    <section class="tab-panel" id="tab-report">
+    <section class="tab-panel" id="tab-report" role="tabpanel">
       <div class="empty-state" id="report-empty">
         <div class="empty-icon">📄</div>
         <div class="empty-title">还没有数据</div>
@@ -629,6 +1106,12 @@
             <h2>报告信息</h2>
             <span class="card-hint">可编辑，会自动填入报告</span>
           </div>
+          <div class="row-actions template-row">
+            <span class="field-label">常用模板</span>
+            <button class="btn btn-ghost btn-sm" data-report-tpl="temp">温度传感器标定实验</button>
+            <button class="btn btn-ghost btn-sm" data-report-tpl="generic">通用数据采集</button>
+            <button class="btn btn-ghost btn-sm" data-report-tpl="clear">清空选填</button>
+          </div>
           <div class="settings-grid">
             <label class="field">
               <span class="field-label">实验名称</span>
@@ -637,6 +1120,26 @@
             <label class="field field-wide">
               <span class="field-label">实验目的</span>
               <textarea id="report-purpose" class="input textarea-sm" rows="3" placeholder="例如：通过串口采集环境温湿度数据，验证传感器稳定性，分析数据波动与异常。"></textarea>
+            </label>
+            <label class="field field-wide">
+              <span class="field-label">实验器材 <span class="field-opt">选填</span></span>
+              <textarea id="report-equipment" class="input textarea-sm" rows="2" placeholder="例如：STM32 开发板、DHT22 温湿度传感器、USB 转串口模块、杜邦线若干。"></textarea>
+            </label>
+            <label class="field field-wide">
+              <span class="field-label">实验步骤 <span class="field-opt">选填</span></span>
+              <textarea id="report-steps" class="input textarea-sm" rows="3" placeholder="每行一步，例如：&#10;1. 连接传感器与开发板并上电&#10;2. 打开串口工具，设置波特率 115200&#10;3. 每 1 秒采集一次，持续 60 秒"></textarea>
+            </label>
+            <label class="field field-wide">
+              <span class="field-label">注意事项 <span class="field-opt">选填</span></span>
+              <textarea id="report-notes" class="input textarea-sm" rows="2" placeholder="每行一条，例如：&#10;传感器远离热源&#10;采集期间避免移动设备"></textarea>
+            </label>
+            <label class="field field-wide">
+              <span class="field-label">数据记录说明 <span class="field-opt">选填</span></span>
+              <textarea id="report-datarec" class="input textarea-sm" rows="2" placeholder="例如：原始日志含时间戳，剔除前 3 行启动信息；温度单位 ℃，湿度 %RH。"></textarea>
+            </label>
+            <label class="field field-wide">
+              <span class="field-label">仪器台账 <span class="field-opt">选填</span></span>
+              <textarea id="report-instruments" class="input textarea-sm" rows="3" placeholder="每行一台仪器，逗号分隔：名称, 型号, 编号, 精度等级/允差, 校准日期&#10;例如：数字万用表, UT61E, SN-2024-018, ±(0.5%+3), 2025-09-01&#10;恒温水浴, HH-2, SN-2024-003, ±0.1℃, 2025-06-15"></textarea>
             </label>
           </div>
         </div>
@@ -650,8 +1153,12 @@
               <button class="btn btn-outline" id="export-txt-btn">导出 .txt</button>
               <button class="btn btn-outline" id="export-md-btn">导出 .md</button>
               <button class="btn btn-outline" id="export-pdf-btn">导出 PDF</button>
+              <button class="btn btn-outline" id="export-docx-btn" title="生成带样式与图表的 Word 文档，可直接交课设">导出 Word</button>
+              <button class="btn btn-outline" id="export-html-btn" title="报告与图表打包成单个 HTML，双击即可查看">导出单文件 HTML</button>
+              <button class="btn btn-outline" id="export-latex-btn">复制 LaTeX 统计表</button>
             </div>
           </div>
+          <textarea id="latex-output" class="input textarea-sm latex-output hidden" readonly rows="10" spellcheck="false" placeholder="LaTeX 统计表源码"></textarea>
           <pre class="report-preview" id="report-preview">点击「生成报告」开始</pre>
         </div>
       </div>
@@ -671,9 +1178,12 @@
   <script src="parser.js"></script>
   <script src="analysis.js"></script>
   <script src="calib.js"></script>
+  <script src="fit.js"></script>
   <script src="filter.js"></script>
   <script src="fft.js"></script>
+  <script src="serial.js"></script>
   <script src="report.js"></script>
+  <script src="project.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -119,5 +119,30 @@ const LabFFT = (() => {
     return worst;
   }
 
-  return { amplitudeSpectrum, findPeaks, mainsHum, nextPow2 };
+  /* ---------------- 均匀重采样 ---------------- */
+
+  // 非均匀采样线性插值到均匀网格后再做 FFT，数学上才严谨
+  // ts 升序（秒），rate 为目标采样率（Hz）；返回 { ys, n, step } 或 null
+  function resampleUniform(ts, ys, rate) {
+    const n0 = ts.length;
+    if (n0 < 4 || !isFinite(rate) || rate <= 0) return null;
+    const t0 = ts[0], tN = ts[n0 - 1];
+    const span = tN - t0;
+    if (!(span > 0)) return null;
+    const n = Math.floor(span * rate) + 1;
+    if (n < 4 || n > 200000) return null; // 太少没意义，太多防卡顿
+    const out = new Array(n);
+    let j = 0;
+    for (let i = 0; i < n; i++) {
+      const t = t0 + i / rate;
+      while (j < n0 - 2 && ts[j + 1] < t) j++;
+      if (t <= ts[0]) { out[i] = ys[0]; continue; }
+      if (t >= ts[n0 - 1]) { out[i] = ys[n0 - 1]; continue; }
+      const dt = ts[j + 1] - ts[j];
+      out[i] = dt > 0 ? ys[j] + (ys[j + 1] - ys[j]) * (t - ts[j]) / dt : ys[j];
+    }
+    return { ys: out, n, step: 1 / rate };
+  }
+
+  return { amplitudeSpectrum, findPeaks, mainsHum, nextPow2, resampleUniform };
 })();

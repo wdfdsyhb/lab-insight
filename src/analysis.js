@@ -32,6 +32,55 @@ const LabAnalysis = (() => {
     return median(devs);
   }
 
+  // 线性插值分位数（教材标准法），p ∈ [0,1]
+  function quantile(sorted, p) {
+    if (!sorted.length) return NaN;
+    const pos = (sorted.length - 1) * p;
+    const base = Math.floor(pos);
+    const rest = pos - base;
+    return sorted[base + 1] !== undefined
+      ? sorted[base] + rest * (sorted[base + 1] - sorted[base])
+      : sorted[base];
+  }
+
+  /* 异常判定三种口径：mad（稳健 z 分数）/ sigma3（3σ）/ iqr（四分位距）
+     返回 {outliers, th:{lo,hi,kind,label}} —— th 供图表画阈值虚线与口径文案 */
+  function detectOutliers(vals, valIdx, method) {
+    const n = vals.length;
+    const out = { outliers: [], th: null };
+    if (n < 8) return out;
+    if (method === 'sigma3') {
+      const m = mean(vals);
+      const s = std(vals);
+      if (s <= 0) return out;
+      const lo = m - 3 * s, hi = m + 3 * s;
+      vals.forEach((x, k) => { if (x < lo || x > hi) out.outliers.push(valIdx[k]); });
+      out.th = { lo, hi, kind: 'sigma3', label: '均值 ± 3σ' };
+      return out;
+    }
+    if (method === 'iqr') {
+      const sorted = [...vals].sort((a, b) => a - b);
+      const q1 = quantile(sorted, 0.25);
+      const q3 = quantile(sorted, 0.75);
+      const iqr = q3 - q1;
+      if (iqr <= 0) return out;
+      const lo = q1 - 1.5 * iqr, hi = q3 + 1.5 * iqr;
+      vals.forEach((x, k) => { if (x < lo || x > hi) out.outliers.push(valIdx[k]); });
+      out.th = { lo, hi, kind: 'iqr', label: 'Q1 − 1.5×IQR ~ Q3 + 1.5×IQR' };
+      return out;
+    }
+    // 默认 mad：稳健 z 分数（基于 MAD）> 3.5 或偏离中位数超 4×MAD
+    const md = median(vals);
+    const mdAbs = mad(vals);
+    if (mdAbs <= 0) return out;
+    vals.forEach((x, k) => {
+      const mz = 0.6745 * (x - md) / mdAbs;
+      if (Math.abs(mz) > 3.5 || Math.abs(x - md) > 4 * mdAbs) out.outliers.push(valIdx[k]);
+    });
+    out.th = { lo: md - 4 * mdAbs, hi: md + 4 * mdAbs, kind: 'mad', label: '中位数 ± 4×MAD' };
+    return out;
+  }
+
   /* ---------------- 列名美化：temp_c → temp(°C) ---------------- */
 
   const UNIT_MAP = {
@@ -51,9 +100,79 @@ const LabAnalysis = (() => {
     return col.name;
   }
 
+  // 从列名推断单位（不含列名本身）：unit 字段优先，其次 _c/_pct 等后缀映射，用于图表 Y 轴标题
+  function unitOf(col) {
+    if (col.unit) return col.unit;
+    const m = String(col.name).match(/^(.+?)_([a-zµ]+)$/i);
+    if (m && UNIT_MAP[m[2].toLowerCase()]) return UNIT_MAP[m[2].toLowerCase()];
+    return '';
+  }
+
+  /* ---------------- 置信区间（t 分布，df>30 近似 1.96） ---------------- */
+
+  // t(0.975) 双侧 95% 临界值，自由度 df = n-1，1~30 查表，>30 用正态近似
+  const T975 = [12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262,
+    2.228, 2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,
+    2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042];
+
+  function tCrit975(df) {
+    if (df <= 0) return NaN;
+    return df <= 30 ? T975[df - 1] : 1.96;
+  }
+
+  // 均值标准误与 95% 置信区间半宽：sem = s/√n，ciHalf = t·sem
+  function meanCI(vals, s) {
+    const n = vals.length;
+    if (n < 2) return { sem: 0, ciHalf: 0, df: n - 1 };
+    const sem = s / Math.sqrt(n);
+    const df = n - 1;
+    return { sem, ciHalf: tCrit975(df) * sem, df };
+  }
+
+  /* ---------------- Pearson 相关系数矩阵 ---------------- */
+
+  function pearson(a, b) {
+    const n = Math.min(a.length, b.length);
+    if (n < 3) return NaN;
+    let sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
+    for (let i = 0; i < n; i++) { sa += a[i]; sb += b[i]; }
+    const ma = sa / n, mb = sb / n;
+    for (let i = 0; i < n; i++) {
+      const da = a[i] - ma, db = b[i] - mb;
+      saa += da * da; sbb += db * db; sab += da * db;
+    }
+    if (saa === 0 || sbb === 0) return NaN; // 常数列无意义
+    return sab / Math.sqrt(saa * sbb);
+  }
+
+  // 按行序对齐取两列都有效的值；cols 为 {index,name,pretty,type} 数组（建议 ≤6 列）
+  function corrMatrix(ds, cols) {
+    const colsN = cols.filter(c => c.type === 'numeric');
+    const series = colsN.map(c => ds.rows.map(r => {
+      const v = r.cells[c.index];
+      return (typeof v === 'number' && isFinite(v) && !r.badCells.has(c.index)) ? v : null;
+    }));
+    const n = colsN.length;
+    const m = [];
+    for (let i = 0; i < n; i++) {
+      m.push(new Array(n).fill(null));
+      for (let j = 0; j < n; j++) {
+        if (i === j) { m[i][j] = 1; continue; }
+        if (j < i) { m[i][j] = m[j][i]; continue; }
+        const a = [], b = [];
+        for (let k = 0; k < series[i].length; k++) {
+          if (series[i][k] !== null && series[j][k] !== null) { a.push(series[i][k]); b.push(series[j][k]); }
+        }
+        m[i][j] = pearson(a, b);
+      }
+    }
+    return { names: colsN.map(c => prettyColName(c)), matrix: m, pairs: n };
+  }
+
   /* ---------------- 每列统计 + 离群点 ---------------- */
 
-  function computeStats(ds) {
+  function computeStats(ds, method) {
+    const m_ = method || 'mad'; // 默认稳健 MAD 口径
     const stats = [];
     ds.numericColumns.forEach(col => {
       const vals = [];
@@ -77,17 +196,11 @@ const LabAnalysis = (() => {
       const first = vals[0];
       const last = vals[n - 1];
 
-      // 离群点：稳健 z 分数（MAD）> 3.5 或偏离中位数超 4×MAD
-      const outliers = [];
-      if (n >= 8 && mdAbs > 0) {
-        valIdx.forEach((ri, k) => {
-          const x = vals[k];
-          const mz = 0.6745 * (x - md) / mdAbs;
-          if (Math.abs(mz) > 3.5 || Math.abs(x - md) > 4 * mdAbs) {
-            outliers.push(ri);
-          }
-        });
-      }
+      // 离群点判定（口径可切：mad / sigma3 / iqr）
+      const det = detectOutliers(vals, valIdx, m_);
+      const outliers = det.outliers;
+
+      const ci = meanCI(vals, s);
 
       stats.push({
         column: col.index,
@@ -101,6 +214,9 @@ const LabAnalysis = (() => {
         max: Math.max(...vals),
         mean: m,
         std: s,
+        sem: ci.sem,
+        ciHalf: ci.ciHalf,
+        ciDF: ci.df,
         median: md,
         mad: mdAbs,
         range: Math.max(...vals) - Math.min(...vals),
@@ -108,6 +224,7 @@ const LabAnalysis = (() => {
         first, last,
         cv: Math.abs(m) > 1e-9 ? s / Math.abs(m) : 0,
         outliers, // 行下标数组
+        outlierTh: det.th, // 阈值上下限与口径（画阈值虚线 / 口径文案用）
         values: vals,
         valueRows: valIdx
       });
@@ -364,12 +481,15 @@ const LabAnalysis = (() => {
 
   return {
     computeStats,
+    detectOutliers,
     detectTrend,
     segmentSeries,
     volatilityLabel,
     buildConclusion,
-    prettyColName,
+    prettyColName, unitOf,
     samplingQuality,
+    meanCI,
+    corrMatrix,
     fmt,
     fmtDuration
   };
