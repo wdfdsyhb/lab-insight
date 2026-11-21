@@ -477,6 +477,83 @@ const LabAnalysis = (() => {
     };
   }
 
+  /* ---------------- Welch's t 检验（v4.1） ----------------
+     独立两样本 t 检验（不假设方差齐），自由度用 Welch–Satterthwaite。
+     p 值由不完全贝塔函数算 t 分布的尾部概率（连分数法，标准数值算法），
+     纯本地实现，不依赖外部库。 */
+
+  // log-gamma（Lanczos 近似）
+  function lgamma(x) {
+    const g = [76.18009172947146, -86.50532032941677, 24.01409824083091,
+      -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5];
+    let x0 = x, tmp = x0 + 5.5;
+    tmp -= (x0 + 0.5) * Math.log(tmp);
+    let ser = 1.000000000190015;
+    for (let j = 0; j < 6; j++) ser += g[j] / (++x0);
+    return -tmp + Math.log(2.5066282746310005 * ser / x);
+  }
+
+  // 不完全贝塔 I_x(a, b)（连分数法，Numerical Recipes 标准实现）
+  function betacf(a, b, x) {
+    const MAXIT = 200, EPS = 3e-12, FPMIN = 1e-300;
+    const qab = a + b, qap = a + 1, qam = a - 1;
+    let c = 1, d = 1 - qab * x / qap;
+    if (Math.abs(d) < FPMIN) d = FPMIN;
+    d = 1 / d;
+    let h = d;
+    for (let m = 1; m <= MAXIT; m++) {
+      const m2 = 2 * m;
+      let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+      d = 1 + aa * d;
+      if (Math.abs(d) < FPMIN) d = FPMIN;
+      c = 1 + aa / c;
+      if (Math.abs(c) < FPMIN) c = FPMIN;
+      d = 1 / d;
+      h *= d * c;
+      aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+      d = 1 + aa * d;
+      if (Math.abs(d) < FPMIN) d = FPMIN;
+      c = 1 + aa / c;
+      if (Math.abs(c) < FPMIN) c = FPMIN;
+      d = 1 / d;
+      const del = d * c;
+      h *= del;
+      if (Math.abs(del - 1) < EPS) break;
+    }
+    return h;
+  }
+
+  function ibeta(a, b, x) {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    // ln B(a,b) = lgamma(a+b) − lgamma(a) − lgamma(b)（注意符号：之前写反会导致 p 值虚大）
+    const bt = Math.exp(lgamma(a + b) - lgamma(a) - lgamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+    return x < (a + 1) / (a + b + 2) ? bt * betacf(a, b, x) / a
+      : 1 - bt * betacf(b, a, 1 - x) / b;
+  }
+
+  // Welch's t 检验：a/b 为两组有效样本值数组
+  // 返回 { t, df, p, sig, m1, m2, n1, n2 } 或 null（样本不足 / 无方差）
+  function tTestWelch(a, b) {
+    const n1 = a.length, n2 = b.length;
+    if (n1 < 2 || n2 < 2) return null;
+    const mean = arr => arr.reduce((s, v) => s + v, 0) / arr.length;
+    const varr = (arr, m) => arr.reduce((s, v) => s + (v - m) * (v - m), 0) / (arr.length - 1);
+    const m1 = mean(a), m2 = mean(b);
+    const v1 = varr(a, m1), v2 = varr(b, m2);
+    const se2 = v1 / n1 + v2 / n2;
+    if (!(se2 > 0)) return null;
+    const t = (m1 - m2) / Math.sqrt(se2);
+    const df = se2 * se2 /
+      ((v1 * v1) / (n1 * n1 * (n1 - 1)) + (v2 * v2) / (n2 * n2 * (n2 - 1)));
+    const p = ibeta(df / 2, 0.5, df / (df + t * t)); // 双尾 p 值
+    const sig = p < 0.01 ? '差异高度显著（p < 0.01）'
+      : p < 0.05 ? '差异显著（p < 0.05）'
+      : p < 0.1 ? '弱显著（0.05 ≤ p < 0.10）'
+      : '差异不显著（p ≥ 0.10）';
+    return { t: t, df: df, p: p, sig: sig, m1: m1, m2: m2, n1: n1, n2: n2 };
+  }
+
   /* ---------------- 对外 ---------------- */
 
   return {
@@ -490,6 +567,7 @@ const LabAnalysis = (() => {
     samplingQuality,
     meanCI,
     corrMatrix,
+    tTestWelch,
     fmt,
     fmtDuration
   };

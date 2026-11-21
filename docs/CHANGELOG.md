@@ -194,3 +194,29 @@
 - [完成] dist/ 与 src/ 全量对齐并逐文件哈希校验（29 个文件一致，vendor 8 个）；README 补 v3.0~v4.0 能力（七页签、SPC 控制图、项目库、答辩演示、PPT 大纲、3D 星系/实验台、仪表盘、模型辨识、复现包/指纹、分享链接）与目录结构、技术栈
 - [完成] git 提交 780fb3c 并推送 main（20 个文件，+3035 / −60），origin/main 与本地一致（ahead/behind = 0/0）
 - [备注] 线上仍为 v2.9，v3.0~v4.0 需走 Qoder Sites 发布流程上线；dist/vendor 三个新文件（three.min.js 608KB、lz-string.min.js 4.8KB、jszip.min.js 97KB）必须一并上传
+
+## 2026-11-21（v4.1，ZCode 第二批）
+
+> 本批四项：三项新功能（Welch t 检验 / 传感器驱动包 / 实验知识卡）+ 一项确认（对比组列序错位 P1 已由 DSH 修复并验证）。全部纯本地，无新 CDN 依赖。
+
+- [完成] v4.1 功能 A「Welch's t 检验（组间差异显著性）」：analysis.js 新增 tTestWelch(a, b)——独立两样本 t 检验（Welch 版，不假设方差齐），自由度 Welch–Satterthwaite；双尾 p 值由不完全贝塔函数（连分数法，Numerical Recipes 标准实现）纯本地计算，含 log-gamma Lanczos 近似。多组对比卡在组数 ≥2 时自动对前两组做检验并展示（t / 自由度 / 双尾 p / 显著性分级），结果存 state.compareTTest；report.js 数据结果节自动追加「组间差异检验」段落（生成报告时经 info.tTest 传入），Word / 静态 HTML 同步（src/analysis.js lgamma/betacf/ibeta/tTestWelch、src/app.js renderCompareChart、src/report.js）
+- [修复] t 检验 p 值计算初版符号错误：ibeta 的 ln B(a,b) 写成 +lgamma(a)+lgamma(b)（正确为 lgamma(a+b)−lgamma(a)−lgamma(b)），导致 p 值虚大——实测 t=8.63、df≈23 时 p=0.136（应为 1e-8 量级）。修正后 t=8.63 → p=1.11e-8「差异高度显著」，与理论一致；不显著正例（两组同均值）p=0.734 亦正确（src/analysis.js ibeta）
+- [完成] v4.1 功能 B「传感器驱动包生成」：工具箱 C 代码卡新增「下载驱动包 (.zip)」——按当前来源（NTC B 值式 / NTC Steinhart-Hart / ADC / 多项式）生成可直接进工程的三件套：sensor.h（参数宏化 + include guard + 接口声明）、sensor.c（实现引用宏，换标定只改头文件）、driver.md（换算模型说明 + 典型接线 + 使用示例 + 换算记录快照 + 参数指纹）；NTC B 值式额外内置 21 点分度表数组与 ntc_temp_lut() 查表插值版（无 math.h 依赖）；指纹与复现包同源（SHA-256(参数 JSON + 换算记录)）（src/app.js genDriverPackage/genCCodeParamsSnapshot、src/index.html #cg-pkg-btn）
+- [完成] v4.1 功能 C「实验知识卡」：页签栏新增「📖 实验知识」按钮，弹出左目录右正文的弹层（6 组 17 卡，按当前页签自动定位组）——把工具里每个方法背后的"为什么"写成卡片：串口容错解析哲学、两点标定原理、B 值式 vs S-H 选型、线性度/迟滞含义、修正 R² 的作用、三种异常口径选择、A 类/B 类不确定度、SPC 读图法、Welch t 检验含义、误差棒含义、滤波选型、FFT 重采样原因、指纹与可复现性、驱动包用法、定时器/过采样原理、处理流水价值、误差分析节构成；Esc / 点遮罩关闭（src/app.js KNOWLEDGE/setupKnowledge、src/index.html #know-overlay、src/style.css .know-*）
+- [确认] v3.0 遗留 P1「对比组列序错位」已由 DSH 修复并代码复核：renderCompareCols 的 option value 存列名、renderCompareChart 各组按 ds.columns.find(name) 定位自己的 index（v4.0 验收与三处修复一节有完整记录）——本批实测多组对比 + t 检验路径时列序错位不再出现
+- [验收] chrome-devtools 实测（file://）：显显著正例——串口示例（39 行 press 均值 1013.274）+ 构造 B 组（1012.25）→ t = 8.63、自由度 ≈ 23.1、双尾 p = 1.11e-8「差异高度显著」；不显著正例——两组同均值数据 p = 0.734「差异不显著」✓；报告 3195 字符数据结果节自动出现「组间差异检验（Welch's t，通道 press）…差异高度显著」段 ✓；驱动包下载 ntc_b-driver.zip（ntc_temp + ntc_temp_lut + 21 点分度表宏化）✓；知识卡弹层 6 组 17 卡、按当前页签定位、目录点击切换 ✓；回归：串口示例 39 行跳 7、报告含误差分析节、答辩演示开/关、3D 星系开/关、控制台 JS 报错 0 条 ✓
+- [备注] dist/ 同步与发布仍待手动执行（同 v4.0 批次备注）；t 检验当前只对比前两组，三组以上需要两两比较（多重比较校正 Bonferroni），如有需求在下批扩展
+
+## 2026-11-21（v4.1 验收与四处修复，DSH）
+
+> 本批验收 ZCode 交付的 v4.1 三项功能，验收过程中发现并修掉四个问题（一个算法精度、两个接线遗漏、一个定位逻辑）。
+
+- [验收] Welch t 检验与 scipy 1.18.1 逐位比对：三组已知样本（n=10/10、n=5/5、n=5/5）的 t / 自由度 / 双尾 p 全部一致到机器精度——case1 t=-25.436488070744645 df=18 p=1.4642031880879274e-15（scipy 1.4642031880878227e-15）；case2 t=-0.17960530202677139 df=7.711133400200595 p=0.8620918996972431；case3 t=-1.8973665961010275 df=5.882352941176471 p=0.1075311949306115；样本不足（n<2）返回 null ✓
+- [验收] 多组对比联动：串口示例（temp 25.9392）作 A 组 + 构造列序打乱的 B 组（humi,temp,press，10 行）→ 下拉框选项为列名、A 组取 temp 首点 25.32、B 组取 temp 首点 28（列序错位不复现）→ t = -23.062、df ≈ 46.5、p = 4.36e-27「差异高度显著」，与按两组均值/标准差手算的 scipy 值（t=-23.075、p=4.175e-27）在 3 位有效数字内一致
+- [验收] 驱动包三型全通：ntc → sensor.h 503 B / sensor.c 1317 B / driver.md 1020 B，include guard 齐、含 math.h、指纹 SHA-256:62a697b5；adc → 236/180/655 B、无 math.h、指纹 771e048f；poly → 201/87/605 B、指纹 7875e74e；改 B 值 3950→3435 后指纹变 c6da207d、改回后指纹复原 62a697b5（指纹确由参数决定）✓
+- [验收] 实验知识卡：6 组 17 卡全渲染；六个页签逐个切换后打开弹层，默认定位分别落在「导入数据 / 校准换算 / 智能分析 / 滤波实验 / 工具箱 / 生成报告」组（修复后，见下）✓
+- [修复] NTC 分度表按线性等距取点导致查表插值误差过大：旧实现 R 从 1000 Ω 到 100000 Ω 线性等分 21 点，低阻段一格跨约 5 kΩ，全量程最大偏差 12.66 °C（R=2711 Ω 处精确 57.58 °C、查表 70.24 °C），R=10 kΩ 处也有 0.64 °C 偏差。改为对数等距取点后最大偏差降到 0.25 °C（R=1124 Ω），R=10 kΩ 处偏差 0（src/app.js genDriverPackage 的 rs 生成；driver.md 增补取点说明）
+- [修复] Word 报告缺「组间差异检验」段：report.js buildDocx 的 info 解构漏了 tTest，且 app.js 构造 pkg 时未带 tTest —— 文本报告有、Word 没有。两处补齐后 document.xml 23113 字符、含 Welch 段（n=39 均值 25.939 vs n=10 均值 28.225，t=-23.062，df≈46.5，p=4.36e-27）（src/report.js buildDocx、src/app.js export-docx-btn）
+- [修复] 清空对比组后 t 检验残留：compare-clear-btn 与 afterParse 只清 compareSets 不清 compareTTest，导致报告里留着上一轮的组间检验。两处补 delete state.compareTTest；实测清空后 state.compareTTest 为 undefined、报告不再含 Welch 段（src/app.js）
+- [修复] 知识卡不按页签定位：页签元素的 data-tab 是英文标识（如 toolbox），而知识卡分组键是中文页签名，旧代码用 dataset.tab 去 groups.indexOf 恒为 -1，每次都落到第一组。改为读页签文本（textContent.trim()）匹配；实测六页签定位全对（src/app.js setupKnowledge）
+- [验收] 回归：串口示例 39 行跳 7、temp 25.93923076923077（σ 0.541987 / 95%CI 0.170103 / 异常 2）、humi 62.9297、press 1013.2744、直方图 15 bin 求和 39、SPC 7 子组、主图 3 数据集、报告 2917 字符六节含误差分析与讨论与测量不确定度、PPT 大纲导出正常、控制台 JS 报错 0 条

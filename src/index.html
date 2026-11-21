@@ -34,6 +34,7 @@
         <button class="tab" data-tab="filter" role="tab" aria-selected="false" aria-controls="tab-filter">滤波实验</button>
         <button class="tab" data-tab="report" role="tab" aria-selected="false" aria-controls="tab-report">生成报告</button>
       </nav>
+      <button class="know-trigger" id="know-open-btn" title="实验知识卡：每个方法背后的「为什么」">📖 实验知识</button>
     </div>
   </header>
 
@@ -696,6 +697,7 @@
           <button class="btn btn-outline" id="cg-copy-btn">复制</button>
           <button class="btn btn-outline" id="cg-dl-btn" title="下载为 .h 头文件，可直接放进工程编译">下载 .h</button>
           <button class="btn btn-outline" id="cg-ino-btn" title="生成可直接烧录的 Arduino 完整示例（setup + loop + 换算函数）">下载 Arduino .ino</button>
+          <button class="btn btn-outline" id="cg-pkg-btn" title="打包驱动模块：sensor.h / sensor.c / driver.md（接线说明 + 标定档案 + 指纹），可直接放进工程">下载驱动包 (.zip)</button>
         </div>
         <pre class="code-out" id="cg-output">点「生成 C 代码」，按上面选择的来源，读取校准页当前参数生成代码。</pre>
       </div>
@@ -1294,6 +1296,21 @@
   </footer>
 
   <div class="toast-root" id="toast-root"></div>
+
+  <!-- v4.1 实验知识卡弹层 -->
+  <div class="know-overlay hidden" id="know-overlay">
+    <div class="know-panel">
+      <div class="know-head">
+        <b>实验知识卡</b>
+        <span class="card-hint">这套工具里每个方法背后的"为什么"</span>
+        <button class="btn btn-ghost btn-sm" id="know-close-btn">关闭 (Esc)</button>
+      </div>
+      <div class="know-body">
+        <nav class="know-nav" id="know-nav"></nav>
+        <div class="know-content" id="know-content"></div>
+      </div>
+    </div>
+  </div>
 
   <script src="vendor/lz-string.min.js"></script>
   <script src="vendor/jszip.min.js"></script>

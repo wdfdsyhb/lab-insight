@@ -949,6 +949,7 @@ function afterParse(ds) {
   syncOutlierUI();
   // v2.8：新数据清掉并列对比组（第一组跟随当前数据）
   state.compareSets = [];
+  delete state.compareTTest; // v4.1：新数据也清掉上一轮的组间检验结果
   if (state.compareChart) { state.compareChart.destroy(); state.compareChart = null; }
   const cmpWrap = $('compare-wrap');
   if (cmpWrap) cmpWrap.classList.add('hidden');
@@ -3751,7 +3752,8 @@ function setupReport() {
     const info = Object.assign({
       title: $('report-title').value,
       purpose: $('report-purpose').value,
-      ops: state.ops.slice()
+      ops: state.ops.slice(),
+      tTest: state.compareTTest || null // v4.1：多组对比的组间差异检验结果
     }, extraInfo());
     state.reportText = LabReport.buildReport(state.ds, state.stats, state.conclusion.text, info);
     // v2.3：生成报告时同时抓取当前图表位图，打印/PDF 版会附在「图表附录」
@@ -3809,6 +3811,7 @@ function setupReport() {
       events: info.events,
       instruments: info.instruments, uncertainty: info.uncertainty,
       outlierMethod: info.outlierMethod, evalRecord: info.evalRecord,
+      tTest: state.compareTTest || null,
       ds: state.ds, stats: state.stats, conclusionText: state.conclusion.text,
       charts: state.reportCharts || []
     };
@@ -4526,6 +4529,8 @@ function setupCompare() {
   });
   $('compare-clear-btn').addEventListener('click', () => {
     state.compareSets = [];
+    // v4.1：清空对比组时必须一并清掉 t 检验结果，否则报告里会残留上一轮的组间检验
+    delete state.compareTTest;
     if (state.compareChart) { state.compareChart.destroy(); state.compareChart = null; }
     $('compare-wrap').classList.add('hidden');
     $('compare-groups').innerHTML = '';
@@ -4676,12 +4681,257 @@ function renderCompareChart() {
   }).join('');
   const mArr = all.map((g, gi) => statOf(series[gi].filter(v => v !== null && isFinite(v))).m).filter(v => isFinite(v));
   const spread = mArr.length >= 2 ? LabAnalysis.fmt(Math.max(...mArr) - Math.min(...mArr), 3) : '—';
-  tbl.innerHTML = `<table><thead><tr><th>组</th><th>有效点数</th><th>均值${u ? `(${u})` : ''}</th><th>标准差</th></tr></thead><tbody>${rowsHtml}</tbody></table><div class="corr-legend">组间均值极差：${spread}${u}（越小说明重复性越好）</div>`;
+  // v4.1：两组及以上时对前两组做 Welch's t 检验（差异显著性），结果存 state.compareTTest 供报告引用
+  let tTestHtml = '';
+  if (all.length >= 2) {
+    const a1 = series[0].filter(v => v !== null && isFinite(v));
+    const a2 = series[1].filter(v => v !== null && isFinite(v));
+    const tt = LabAnalysis.tTestWelch ? LabAnalysis.tTestWelch(a1, a2) : null;
+    if (tt) {
+      state.compareTTest = {
+        col: colName, labelA: all[0].label, labelB: all[1].label,
+        t: tt.t, df: tt.df, p: tt.p, sig: tt.sig,
+        m1: tt.m1, m2: tt.m2, n1: tt.n1, n2: tt.n2
+      };
+      tTestHtml = `<div class="corr-legend" style="margin-top:8px">组间差异检验（Welch's t，「${escapeHtml(all[0].label)}」vs「${escapeHtml(all[1].label)}」，通道 ${escapeHtml(colName)}）：` +
+        `t = ${LabAnalysis.fmt(tt.t, 3)}，自由度 ≈ ${tt.df.toFixed(1)}，双尾 p = ${tt.p < 0.0001 ? tt.p.toExponential(2) : tt.p.toFixed(4)}` +
+        ` —— <b>${escapeHtml(tt.sig)}</b>。p &lt; 0.05 说明两组均值差异不太可能纯属随机波动。</div>`;
+    } else {
+      delete state.compareTTest;
+      tTestHtml = `<div class="corr-legend" style="margin-top:8px">组间差异检验：样本不足（两组各需 ≥2 个有效点），暂无法计算。</div>`;
+    }
+  } else {
+    delete state.compareTTest;
+  }
+  tbl.innerHTML = `<table><thead><tr><th>组</th><th>有效点数</th><th>均值${u ? `(${u})` : ''}</th><th>标准差</th></tr></thead><tbody>${rowsHtml}</tbody></table><div class="corr-legend">组间均值极差：${spread}${u}（越小说明重复性越好）</div>${tTestHtml}`;
+}
+
+/* ================= v4.1 传感器驱动包 ================= */
+
+// 按当前来源生成可直接进工程的驱动模块：
+//   sensor.h（参数宏 + 接口声明）/ sensor.c（实现，参数宏化）/ driver.md（接线 + 标定档案 + 指纹）
+async function genDriverPackage() {
+  if (typeof JSZip === 'undefined') throw new Error('zip 组件未加载（vendor/jszip.min.js 缺失）');
+  const type = $('cg-type').value;
+  const f = cLit;
+  let hBody = '', cBody = '', readme = '', mod = 'sensor';
+
+  if (type === 'ntc') {
+    const method = document.querySelector('#ntc-method .seg.active').dataset.method;
+    const B = parseFloat($('ntc-b').value), R0 = parseFloat($('ntc-r0').value), T0 = parseFloat($('ntc-t0').value);
+    if (method === 'sh') {
+      const A = parseFloat($('ntc-sh-a').value), B2 = parseFloat($('ntc-sh-b').value), C = parseFloat($('ntc-sh-c').value);
+      mod = 'ntc_sh';
+      hBody =
+`#ifndef SENSOR_${mod.toUpperCase()}_H
+#define SENSOR_${mod.toUpperCase()}_H
+
+/* NTC（Steinhart-Hart 三系数）· 由 LabInsight 标定记录生成 */
+#define NTC_SH_A   ${f(A)}
+#define NTC_SH_B   ${f(B2)}
+#define NTC_SH_C   ${f(C)}
+
+float ntc_temp(float R);   /* 电阻(Ω) → 摄氏温度 */
+
+#endif`;
+      cBody =
+`#include "sensor.h"
+#include <math.h>
+
+float ntc_temp(float R)
+{
+    if (R <= 0.0f) return -273.15f;
+    float lnR = logf(R);
+    float invT = NTC_SH_A + NTC_SH_B * lnR + NTC_SH_C * lnR * lnR * lnR;
+    return 1.0f / invT - 273.15f;
+}`;
+      readme = '## 换算模型\n\nSteinhart-Hart 三系数：1/T = A + B·lnR + C·(lnR)³，T 为开尔文温度。\n\n## 使用\n\n```c\n#include "sensor.h"\nfloat t = ntc_temp(resistance_ohm);\n```';
+    } else {
+      // v4.1 修复：分度表按对数等距取点。NTC 的 R 随温度指数变化，
+      // 若用线性等距（旧实现），低阻段一格跨几千欧，查表插值最大偏差达 12.7 °C；
+      // 对数等距后 21 点最大偏差降到 0.25 °C（R = 10 kΩ 处为 0）。
+      const pts = 21, rMin = R0 * 0.1, rMax = R0 * 10;
+      const rs = [], ts = [];
+      for (let i = 0; i < pts; i++) {
+        const R = parseFloat((rMin * Math.pow(rMax / rMin, i / (pts - 1))).toFixed(2));
+        const t = Number(LabCalib.ntcTempB(R, B, R0, T0));
+        rs.push(R); ts.push(isFinite(t) ? parseFloat(t.toFixed(3)) : 0);
+      }
+      mod = 'ntc_b';
+      const tblR = rs.map(v => f(v)).join(', ');
+      const tblT = ts.map(v => f(v)).join(', ');
+      hBody =
+`#ifndef SENSOR_${mod.toUpperCase()}_H
+#define SENSOR_${mod.toUpperCase()}_H
+
+/* NTC（B 值式）· 由 LabInsight 标定记录生成
+   1/T = 1/T0 + ln(R/R0)/B */
+#define NTC_B     ${f(B)}
+#define NTC_R0    ${f(R0)}
+#define NTC_T0    ${f(T0)}
+#define NTC_TABLE_POINTS ${pts}
+
+extern const float ntc_table_R[NTC_TABLE_POINTS]; /* 分度表：电阻 Ω，${f(rMin)} ~ ${f(rMax)} */
+extern const float ntc_table_T[NTC_TABLE_POINTS]; /* 分度表：对应摄氏温度 */
+
+float ntc_temp(float R);      /* B 值式精确解（需 math.h） */
+float ntc_temp_lut(float R);  /* 查表 + 线性插值（无 math.h 依赖，适合资源紧张单片机） */
+
+#endif`;
+      cBody =
+`#include "sensor.h"
+#include <math.h>
+
+const float ntc_table_R[NTC_TABLE_POINTS] = { ${tblR} };
+const float ntc_table_T[NTC_TABLE_POINTS] = { ${tblT} };
+
+/* B 值式精确解：1/T = 1/T0 + ln(R/R0)/B，T(K) − 273.15 → °C */
+float ntc_temp(float R)
+{
+    if (R <= 0.0f) return -273.15f;
+    float invT = 1.0f / NTC_T0 + logf(R / NTC_R0) / NTC_B;
+    if (invT <= 0.0f) return -273.15f;
+    return 1.0f / invT - 273.15f;
+}
+
+/* 查表 + 线性插值：R 超出分度表范围时按端点截断 */
+float ntc_temp_lut(float R)
+{
+    if (R <= ntc_table_R[0]) return ntc_table_T[0];
+    if (R >= ntc_table_R[NTC_TABLE_POINTS - 1]) return ntc_table_T[NTC_TABLE_POINTS - 1];
+    for (int i = 1; i < NTC_TABLE_POINTS; i++) {
+        if (R <= ntc_table_R[i]) {
+            float t = (R - ntc_table_R[i - 1]) / (ntc_table_R[i] - ntc_table_R[i - 1]);
+            return ntc_table_T[i - 1] + t * (ntc_table_T[i] - ntc_table_T[i - 1]);
+        }
+    }
+    return ntc_table_T[NTC_TABLE_POINTS - 1];
+}`;
+      readme = `## 换算模型\n\nB 值式：1/T = 1/T₀ + ln(R/R₀)/B（B = ${B} K，R₀ = ${R0} Ω @ 25°C）。\n\n两个实现任选：ntc_temp() 精确解（需 math.h）；ntc_temp_lut() 查表插值（含 ${pts} 点分度表，无 math.h 依赖）。\n\n分度表按**对数等距**取点（${f(rMin)} ~ ${f(rMax)} Ω），全量程查表误差 ≤ 0.25 °C，R₀ 附近误差为 0；若改成线性等距，低阻段误差会放大到十几度。\n\n## 典型接线\n\nVCC — NTC — (取样点 → ADC) — R_FIXED(${R0 === 10000 ? '10k' : R0 + 'Ω'}) — GND；ADC 读分压点电压，先由 V = ADC/(2^n−1)×Vref 反算出 R = R_FIXED × V/(VCC − V)，再代入 ntc_temp()。\n\n## 使用\n\n\`\`\`c\n#include "sensor.h"\nfloat t = ntc_temp(resistance_ohm);        /* 精确解 */\nfloat t2 = ntc_temp_lut(resistance_ohm);   /* 查表版 */\n\`\`\``;
+    }
+  } else if (type === 'adc') {
+    const bits = parseFloat($('adc-bits').value), vref = parseFloat($('adc-vref').value), k = parseFloat($('adc-k').value);
+    mod = 'adc_volt';
+    hBody =
+`#ifndef SENSOR_${mod.toUpperCase()}_H
+#define SENSOR_${mod.toUpperCase()}_H
+
+/* ADC 码值 → 电压 · 由 LabInsight 标定记录生成 */
+#define ADC_BITS   ${f(bits)}
+#define ADC_VREF   ${f(vref)}
+#define ADC_K      ${f(k)}   /* 分压还原系数：实际电压 = 测量值 × k */
+
+float adc_to_volt(float code);
+
+#endif`;
+    cBody =
+`#include "sensor.h"
+
+float adc_to_volt(float code)
+{
+    float full = (1u << (int)ADC_BITS) - 1.0f;
+    if (full <= 0.0f) return 0.0f;
+    return code / full * ADC_VREF * ADC_K;
+}`;
+    readme = `## 换算模型\n\nU = code / (2^bits − 1) × Vref × k（bits = ${bits}，Vref = ${vref} V，分压系数 k = ${k}）。\n\n## 使用\n\n\`\`\`c\n#include "sensor.h"\nfloat v = adc_to_volt(adc_raw);\n\`\`\``;
+  } else {
+    const deg = parseInt($('poly-deg').value, 10) || 1;
+    const a = parseFloat($('poly-a').value), b = parseFloat($('poly-b').value);
+    const c2 = deg === 2 ? parseFloat($('poly-c').value) : 0;
+    mod = 'poly_conv';
+    hBody =
+`#ifndef SENSOR_${mod.toUpperCase()}_H
+#define SENSOR_${mod.toUpperCase()}_H
+
+/* 多项式换算（${deg} 次）· 由 LabInsight 标定记录生成 */
+#define POLY_${deg === 2 ? 'C2' : 'C2_UNUSED'} ${f(c2)}
+#define POLY_C1 ${f(b)}
+#define POLY_C0 ${f(a)}
+
+float poly_convert(float x);
+
+#endif`;
+    cBody =
+`#include "sensor.h"
+
+float poly_convert(float x)
+{
+    return POLY_C0 + POLY_C1 * x${deg === 2 ? ' + POLY_C2 * x * x' : ''};
+}`;
+    readme = `## 换算模型\n\n${deg === 2 ? `y = ${c2}·x² + ${b}·x + ${a}` : `y = ${b}·x + ${a}`}（${deg} 次多项式换算）。\n\n## 使用\n\n\`\`\`c\n#include "sensor.h"\nfloat y = poly_convert(raw);\n\`\`\``;
+  }
+
+  // 标定档案 + 指纹（复现包同源算法）
+  const paramsJson = JSON.stringify({ type: type, params: genCCodeParamsSnapshot() });
+  const fp = await LabRepro.fingerprint(paramsJson, (state.calibLog || []).map(e => e.formula || e));
+  const calibLog = (state.calibLog || []).map(e =>
+    `- [${e.tag || 'LOG'}] ${e.src || ''}（${e.valid || 0}/${e.total || 0} 行有效）→ ${e.dst || ''}；${e.formula || ''}`).join('\n');
+  const driverMd =
+`# ${mod} · 传感器驱动模块
+
+> 由 LabInsight 于 ${new Date().toLocaleString('zh-CN')} 自动生成 · 参数指纹 ${fp}
+
+## 文件清单
+
+- sensor.h — 参数宏 + 接口声明（放进工程 include 路径）
+- sensor.c — 实现（参数已宏化，改标定只需改 sensor.h）
+- driver.md — 本文件：接线 / 标定档案 / 使用示例
+
+${readme}
+
+## 标定档案（换算记录快照）
+
+${calibLog || '（暂无换算记录——请在 LabInsight 校准页执行标定后重新生成驱动包）'}
+
+## 参数指纹
+
+\`\`\`
+${fp}
+\`\`\`
+
+指纹 = SHA-256(参数 JSON + 换算记录)。重新标定后再次生成驱动包，指纹会变化；
+在 LabInsight 工具箱「验证复现包」处可比对历史包是否被改动。
+`;
+
+  const zip = new JSZip();
+  zip.file('sensor.h', hBody.trim() + '\n');
+  zip.file('sensor.c', cBody.trim() + '\n');
+  zip.file('driver.md', driverMd);
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+  downloadBlob(blob, mod + '-driver.zip', 'application/zip');
+  return mod;
+}
+
+// 供驱动包 driver.md 记录参数快照（与 genCCode 同源）
+function genCCodeParamsSnapshot() {
+  const type = $('cg-type').value;
+  if (type === 'ntc') {
+    const method = document.querySelector('#ntc-method .seg.active').dataset.method;
+    return method === 'sh'
+      ? { kind: 'ntc-sh', A: $('ntc-sh-a').value, B: $('ntc-sh-b').value, C: $('ntc-sh-c').value }
+      : { kind: 'ntc-b', B: $('ntc-b').value, R0: $('ntc-r0').value, T0: $('ntc-t0').value };
+  }
+  if (type === 'adc') {
+    return { kind: 'adc', bits: $('adc-bits').value, vref: $('adc-vref').value, k: $('adc-k').value };
+  }
+  return {
+    kind: 'poly', deg: $('poly-deg').value,
+    a: $('poly-a').value, b: $('poly-b').value,
+    c: $('poly-c') ? $('poly-c').value : '0'
+  };
 }
 
 function setupToolbox() {
   $('cg-gen-btn').addEventListener('click', genCCode);
   if ($('cg-ino-btn')) $('cg-ino-btn').addEventListener('click', genArduinoSketch);
+  if ($('cg-pkg-btn')) $('cg-pkg-btn').addEventListener('click', async () => {
+    try {
+      $('cg-pkg-btn').disabled = true;
+      const mod = await genDriverPackage();
+      toast(`驱动包已导出（${mod}：sensor.h / sensor.c / driver.md，含参数指纹与标定档案）`, 'success');
+    } catch (e) { toast(e.message, 'error'); }
+    finally { $('cg-pkg-btn').disabled = false; }
+  });
   $('cg-copy-btn').addEventListener('click', () => { copyText($('cg-output').textContent); });
   $('cg-dl-btn').addEventListener('click', () => {
     const out = $('cg-output');
@@ -4774,6 +5024,84 @@ function setupUncertainty() {
   });
 }
 
+/* ================= v4.1 实验知识卡 ================= */
+
+const KNOWLEDGE = {
+  '导入数据': [
+    { t: '为什么串口日志"逐行跳过"而不是整体失败', b: '真实串口日志里混着 [INFO] 前缀、乱码帧、CRC 失败行——这些是采集现场的一部分，不是错误。逐行判定"这行是不是数据"，是数据的收进表、不是的记进"被跳过的行"清单并计数。这样一份数据进来，你能确切知道丢了什么、为什么丢，而不是拿到一个笼统的解析失败。' },
+    { t: '两点标定为什么准', b: 'B 值式只有 B 一个未知量（R₀ 由标称点定），两个已知温度点就能反解它：B = ln(R₁/R₂)/(1/T₁−1/T₂)。数据手册的 B 值是厂家批量典型值，你的这只传感器未必是——用你自己的两点实测反算，理论曲线才贴得住实测点（NTC 卡的 R-T 标定图可以直接看贴合程度）。' }
+  ],
+  '校准换算': [
+    { t: 'B 值式 vs Steinhart-Hart', b: 'B 值式是 Steinhart-Hart 三阶方程在窄温区的近似，公式简单、单片机上算得快，适合 ±1°C 精度要求；S-H 用三个系数覆盖宽温区，精度更高但需要三点标定或厂家系数。没有手册系数时，先用两点标定求 B，够用就停手。' },
+    { t: '线性度与迟滞：传感器好坏的两个关键指标', b: '线性度 δ = 最大残差 / 输出量程，衡量"输出随输入走的直线程度"（≤1% 优、≤2% 良、≤5% 合格）；迟滞是上行和下行行程不一致的程度——真正的迟滞要正反行程交替采集测，工具里的"前后半程斜率差"只是按行序的简版判定，只提示方向、不作为正式指标。' },
+    { t: '模型辨识为什么用修正 R²', b: '普通 R² 只会随参数变多而变大——三次多项式永远"不差于"线性，哪怕多出来的项只是拟合噪声。修正 R² = 1−(1−R²)(n−1)/(n−p−1) 给参数数 p 交罚金，模型竞选才公平。另外本工具的 R² 是在**原始 y 空间**算的：先按变换模型拟合，再把预测值反变换回来跟原始 y 比——直接在 ln(y) 域算 R² 会虚高。' }
+  ],
+  '智能分析': [
+    { t: '三种异常口径怎么选', b: 'MAD 稳健 z 分数对毛刺不敏感（中位数不受极端值拉扯），是默认口径；3σ 经典但均值和标准差本身会被毛刺拉走，毛刺多时容易漏检误检；IQR 是箱线图口径，对分布形状不敏感。切换口径后统计卡、结论、误差棒、区间统计全部重算——同一个数据用不同口径讲不同的故事，这本身就是一个实验发现。' },
+    { t: 'A 类与 B 类不确定度', b: 'A 类来自重复测量（uA = s/√n，"同样的东西测了很多次，每次差多少"）；B 类来自仪器本身（uB = 允差 a/√3，"仪器说 ±0.2°C，它自己就带 ±0.2"）。合成 uC = √(uA²+uB²)，扩展 U = k·uC（k=2 约 95% 置信）。误差节会告诉你哪个主导：A 类主导 → 多测几次能收敛；B 类主导 → 该换表了。' },
+    { t: 'SPC 控制图怎么读', b: '均值图（Xbar）看"过程中心有没有漂移"，极差图（R）看"波动有没有变大"——两幅图越界含义不同：只有均值图越界 → 中心漂移（系统因素）；只有极差图越界 → 波动变大（随机因素加剧）；都越界 → 两者皆有。控制限由子组内的极差推算（A₂/D₃/D₄ 系数表），不是全样本的 3σ——这是 SPC 与"画三条线"的本质区别。' },
+    { t: 'Welch t 检验在回答什么', b: '两组均值不一样，可能是真差异，也可能只是抽样波动。Welch t 检验在"假设两组其实没差别"的前提下算出"看到这么大差异的概率"（p 值）：p < 0.05 意味着这种差异纯属随机的可能性不到 5%。用 Welch 版而不是学生 t，是因为它不要求两组方差相等——实验数据几乎总不相等。' },
+    { t: '图上的误差棒是 ±U', b: '每个数据点的误差棒 = 该通道的扩展不确定度 U = k·√(uA²+uB²)。两根曲线的误差棒互相交叠，说明这点上的差异在不确定度范围内——肉眼觉得"差很多"不一定真的显著，这时看 t 检验的 p 值。' }
+  ],
+  '滤波实验': [
+    { t: '三种滤波怎么选', b: '中值滤波杀毛刺（尖峰会被窗口中位数顶掉，对阶跃信号友好）；滑动平均压白噪声（但把阶跃抹平、有滞后）；一阶低通跟踪缓慢趋势（α 越大越跟手、越小越平滑）。多选叠加对比，看统计对比卡的标准差变化——滤波不是越平滑越好，把你要的特征也滤掉就输了。' },
+    { t: 'FFT 前为什么重采样', b: 'FFT 假设采样点等间隔。串口丢帧后间隔不均，直接变换会出现谱线展宽和虚假频率。默认开启的「重采样后变换」先按采样率线性插值到均匀网格再做 FFT，频谱说明区会标注重采样点数与步长——对比开关前后的谱峰，就知道你的数据受不均匀采样影响多大。' }
+  ],
+  '工具箱': [
+    { t: '指纹与可复现性', b: '指纹 = SHA-256(原始数据文本 + 处理流水)。流水记录了"数据经历了什么"（解析→换算→滤波→清理），改任何一步指纹就变。复现包把数据、流水、报告、指纹一起打包，验证方重算指纹比对——一致即证明"报告结论由这份数据经这条流水得出"。这是把"实验可复现"从承诺变成可验证的东西。' },
+    { t: '驱动包怎么用', b: '解包后把 sensor.h 和 sensor.c 放进工程 include/源文件路径即可。参数全部宏化在 sensor.h——换标定参数只改头文件，sensor.c 不动；driver.md 里带接线说明、你当时的换算记录快照和参数指纹（重标定后指纹会变，可用来核对版本）。' },
+    { t: '定时器助手算的是什么', b: 'STM32 定时器溢出周期 = (PSC+1)(ARR+1)/时钟。工具给出整数 PSC/ARR 组合，使实际采样率最接近目标值，并附 HAL 初始化写法。16 倍过采样提示：4 次平均提 1 位有效分辨率、16 次提 2 位——代价是等效采样率除以过采样倍数。' }
+  ],
+  '生成报告': [
+    { t: '为什么写"处理与计算流程"', b: '报告的价值不在数字本身，而在"这些数字怎么来的"。处理流水把解析、换算、滤波、清理每一步的方式与参数记下来，跟着流水和原始数据，任何人（包括三个月后的你自己）都能重算出同样的结果。复现包指纹让这件事可验证。' },
+    { t: '误差分析与讨论节怎么来的', b: '它汇总四样东西：采样质量（这份数据采得规不规整）、异常检测（哪个口径、几处异常）、不确定度（每通道 mean ± U）、综合判断（扩展不确定度占均值比例 → 可信度分级；A 类/B 类谁主导 → 下一步该多测还是换表）。这一节是整个工具分析的落点：不是堆指标，而是回答"这份数据可不可信"。' }
+  ]
+};
+
+function setupKnowledge() {
+  const overlay = $('know-overlay');
+  const openBtn = $('know-open-btn');
+  const nav = $('know-nav');
+  const content = $('know-content');
+  if (!overlay || !openBtn || !nav || !content) return;
+
+  const groups = Object.keys(KNOWLEDGE);
+  // 目录：按页签分组
+  nav.innerHTML = groups.map(g =>
+    `<div class="know-group"><div class="know-group-name">${escapeHtml(g)}</div>` +
+    KNOWLEDGE[g].map((k, i) => `<button class="know-item" data-g="${escapeHtml(g)}" data-i="${i}">${escapeHtml(k.t)}</button>`).join('') +
+    '</div>').join('');
+
+  function show(g, i) {
+    const k = KNOWLEDGE[g] && KNOWLEDGE[g][i];
+    if (!k) return;
+    content.innerHTML = `<h3>${escapeHtml(k.t)}</h3>` +
+      k.b.split('\n').map(p => `<p>${escapeHtml(p)}</p>`).join('');
+    nav.querySelectorAll('.know-item').forEach(b => b.classList.toggle('active', b.dataset.g === g && b.dataset.i === String(i)));
+  }
+  nav.addEventListener('click', e => {
+    const b = e.target.closest('.know-item');
+    if (b) show(b.dataset.g, Number(b.dataset.i));
+  });
+
+  const open = () => {
+    overlay.classList.remove('hidden');
+    // 打开时定位到当前页签的组（找不到就第一组）
+    // v4.1 修复：页签的 data-tab 是英文标识（如 toolbox），知识卡的分组键是中文页签名，
+    // 旧代码拿 dataset.tab 去 groups.indexOf 永远 -1，导致每次都落到第一组。
+    const cur = document.querySelector('.tab.active');
+    const curName = cur ? cur.textContent.trim() : '';
+    const g = groups.indexOf(curName) >= 0 ? curName : groups[0];
+    show(g, 0);
+  };
+  const close = () => overlay.classList.add('hidden');
+
+  openBtn.addEventListener('click', open);
+  $('know-close-btn').addEventListener('click', close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  window.addEventListener('keydown', e => { if (e.key === 'Escape' && !overlay.classList.contains('hidden')) close(); });
+}
+
 function init() {
   // 页签
   document.querySelectorAll('.tab').forEach(b => {
@@ -4801,6 +5129,7 @@ function init() {
    setupCompare();
    setupPresent();
   setupV4();
+  setupKnowledge();
   $('export-csv-btn').addEventListener('click', exportDataCsv);
   $('export-xlsx-btn').addEventListener('click', exportDataXlsx);
   LabProject.wireBanner();

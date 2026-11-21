@@ -100,6 +100,13 @@ const LabReport = (() => {
       L.push('');
       L.push(`趋势图与滤波对比 / 频谱图已附在导出 PDF 的「图表附录」中（.txt / .md 文本版不含图片）；统计口径：标准差为样本标准差（n-1），漂移量 = 末值 − 初值，SEM = 标准差/√n，95% 置信区间按 t 分布（自由度 n-1，n>31 时近似 1.96）。`);
       L.push('');
+      // v4.1：多组对比的组间差异显著性检验（Welch's t）自动写进报告
+      const tt = info && info.tTest;
+      if (tt) {
+        const fp = v => v < 0.0001 ? v.toExponential(2) : v.toFixed(4);
+        L.push(`组间差异检验（Welch's t，通道 ${tt.col}）：「${tt.labelA}」（n = ${tt.n1}，均值 ${LabAnalysis.fmt(tt.m1, 3)}）与「${tt.labelB}」（n = ${tt.n2}，均值 ${LabAnalysis.fmt(tt.m2, 3)}），t = ${LabAnalysis.fmt(tt.t, 3)}，自由度 ≈ ${tt.df.toFixed(1)}，双尾 p = ${fp(tt.p)} —— ${tt.sig}。`);
+        L.push('');
+      }
       const ops = (info.ops || []).filter(Boolean);
       if (ops.length) {
         L.push('处理与计算流程（可复现）：');
@@ -288,7 +295,8 @@ const LabReport = (() => {
       equipment: pkg.equipment, steps: pkg.steps, notes: pkg.notes, dataRecord: pkg.dataRecord,
       events: pkg.events,
       instruments: pkg.instruments, uncertainty: pkg.uncertainty,
-      outlierMethod: pkg.outlierMethod, evalRecord: pkg.evalRecord };
+      outlierMethod: pkg.outlierMethod, evalRecord: pkg.evalRecord,
+      tTest: pkg.tTest };
     const docxNS = window.docx;
     const t = (info.title || '').trim() || '实验数据记录与分析报告';
     const purpose = (info.purpose || '').trim() || '（请在「报告信息」中补充实验目的）';
@@ -380,6 +388,12 @@ const LabReport = (() => {
       if (ops.length) {
         kids.push(para('处理与计算流程（可复现）：'));
         ops.forEach((o, i) => kids.push(li(`${i + 1}. ${o}`)));
+      }
+      // v4.1：多组对比的组间差异显著性检验（Welch's t）
+      const tt = info.tTest;
+      if (tt) {
+        const fp = v => v < 0.0001 ? v.toExponential(2) : v.toFixed(4);
+        kids.push(para(`组间差异检验（Welch's t，通道 ${tt.col}）：「${tt.labelA}」（n = ${tt.n1}，均值 ${f(tt.m1, 3)}）与「${tt.labelB}」（n = ${tt.n2}，均值 ${f(tt.m2, 3)}），t = ${f(tt.t, 3)}，自由度 ≈ ${tt.df.toFixed(1)}，双尾 p = ${fp(tt.p)} —— ${tt.sig}。p < 0.05 说明两组均值差异不太可能纯属随机波动。`));
       }
     } else {
       kids.push(para('未识别到可统计的数值列。'));
