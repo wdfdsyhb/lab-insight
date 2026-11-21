@@ -30,7 +30,12 @@ const state = {
    events: [],           // 实验事件标注 [{x, label}]（v2.5）
    compareSets: [],      // 多组并列对比：[{label, ds}]，第一组=当前数据（v2.8）
    compareChart: null,   // 对比图实例（v2.8）
-   showErrBars: true     // 主图是否叠加不确定度误差棒（v2.9）
+   showErrBars: true,    // 主图是否叠加不确定度误差棒（v2.9）
+   spcSel: null,         // SPC 控制图当前列 index（v3.0）
+   spcN: 5,              // SPC 子组大小（v3.0）
+   spcXChart: null,      // SPC 均值图实例（v3.0）
+   spcRChart: null,      // SPC 极差图实例（v3.0）
+   dashOn: true          // 虚拟仪表盘开关（v4.0；放 state 里，采集与设置两处共用）
   };
 
 const REDUCED_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -372,9 +377,9 @@ function setupPasteAndSamples() {
 
   $('use-paste-btn').addEventListener('click', () => {
     const text = area.value.trim();
-    if (!text) { toast('请先粘贴串口日志内容', 'error'); return; }
+    if (!text) { toast('请先粘贴数据内容', 'error'); return; }
     state.pending = { text, fileName: null, sourceType: 'text' };
-    state.pendingNote = '粘贴的串口日志';
+    state.pendingNote = '粘贴内容（自动识别串口日志 / 表格）';
     $('file-chip').classList.add('hidden');
     toast('已读取粘贴内容，点击「开始解析」', 'success');
   });
@@ -420,6 +425,7 @@ function setupSerial() {
   let liveMulti = false; // 上次是否多轴（通道数变化需重建 chart）
   let durationTimer = null;
   let marks = [];        // v2.6：采集过程中的手动标记 {rel, label}
+  // v4.0：虚拟仪表盘开关改用 state.dashOn（setupV4 的开关按钮也要读写它）
 
   // 浏览器不支持 Web Serial 时改写提示（模拟按钮仍可用）
   if (!LabSerial.supported()) {
@@ -484,7 +490,24 @@ function setupSerial() {
       $('serial-count').textContent = `已收到 ${totalCount} 行`;
       updateLiveChart();
       updateSerialMetrics();
+      // v4.0：虚拟仪表盘 + 3D 数字孪生实验台实时联动
+      try {
+        const spikes = spikeKeysNow();
+        if (state.dashOn && typeof LabDashboard !== 'undefined') LabDashboard.update(liveSeries, liveKeyOrder, spikes);
+        if (typeof LabBench !== 'undefined' && LabBench.isOpen()) LabBench.updateFromSeries(liveSeries, liveKeyOrder, spikes);
+      } catch (e) { /* 仪表异常不阻断采集 */ }
     }
+  }
+
+  // 当前哪些通道正在毛刺告警（供仪表盘/实验台红闪联动）
+  function spikeKeysNow() {
+    const out = [];
+    liveKeyOrder.slice(0, 3).forEach(key => {
+      const s = liveSeries.get(key);
+      if (!s || !s.data.length) return;
+      if (hasRecentSpike(s.data.map(p => p.y), 6, 6)) out.push(key);
+    });
+    return out;
   }
 
   // 中位数 / MAD（保留用于最小值最大值展示判断）
@@ -874,20 +897,32 @@ function doParse() {
   btn.textContent = '解析中…';
   setTimeout(() => {
     const t0 = performance.now();
-    try {
-      const ds = LabParser.parse(state.pending, opts);
-      if (!ds.rows.length) throw new Error('未识别到有效数据行，请检查内容或解析设置');
+    const finish = (ds) => {
       const durS = (performance.now() - t0) / 1000;
       state.ds = ds;
       afterParse(ds);
       showFeedback(true, ds, null,
-        (bigInput || ds.rows.length > 20000) ? `数据量较大，解析完成：${ds.rows.length} 行，耗时 ${durS.toFixed(1)} s` : null);
+        (bigInput || ds.rows.length > 20000) ? `数据量较大，解析完成：${ds.rows.length} 行，耗时 ${durS.toFixed(1)} s${(bigInput && typeof LabEngine !== 'undefined' && !LabEngine._workerBroken) ? '（Web Worker 后台解析，界面不卡顿）' : ''}` : null);
       LabProject.autoSave();
-    } catch (e) {
-      showFeedback(false, null, e.message);
-    } finally {
       btn.disabled = false;
       btn.textContent = '开始解析';
+    };
+    const fail = (msg) => {
+      showFeedback(false, null, msg);
+      btn.disabled = false;
+      btn.textContent = '开始解析';
+    };
+    if (bigInput && typeof LabEngine !== 'undefined') {
+      // 大数据走 Worker 子线程（file:// 或异常时自动回退主线程）
+      LabEngine.parseAsync(state.pending, opts)
+        .then(r => finish(r.ds))
+        .catch(e => {
+          try { finish(LabParser.parse(state.pending, opts)); }
+          catch (e2) { fail(e2.message); }
+        });
+    } else {
+      try { finish(LabParser.parse(state.pending, opts)); }
+      catch (e) { fail(e.message); }
     }
   }, 30); // 让按钮状态先渲染
 }
@@ -908,9 +943,10 @@ function afterParse(ds) {
   $('range-card').classList.add('hidden');
   state.histSel = null;
   if (state.histChart) { state.histChart.destroy(); state.histChart = null; }
-  // v2.5：新数据清空事件标注
-  state.events = [];
+  // v2.5：新数据清空事件标注（项目恢复时保留快照里的事件）
+  if (!state.restoringProject) state.events = [];
   renderEventsList();
+  syncOutlierUI();
   // v2.8：新数据清掉并列对比组（第一组跟随当前数据）
   state.compareSets = [];
   if (state.compareChart) { state.compareChart.destroy(); state.compareChart = null; }
@@ -921,6 +957,8 @@ function afterParse(ds) {
   const cmpGrp = $('compare-groups');
   if (cmpGrp) cmpGrp.innerHTML = '';
   renderCompareCols();
+  // v3.0：新数据重置 SPC 控制图选列
+  state.spcSel = null;
   // v2.6：把采集过程中的手动标记转成事件（时间对齐到数据时间轴）
   if (state.pendingMarks && state.pendingMarks.length && ds.meta.time) {
     const tv = ds.rows.map(r => r.timeValue).filter(v => typeof v === 'number' && isFinite(v));
@@ -1416,6 +1454,9 @@ function renderAnalysis() {
   // 取值分布直方图（v2.4）
   renderHist();
 
+  // SPC 控制图（v3.0）
+  renderSPC();
+
   // 结论
   $('conclusion-body').innerHTML = state.conclusion.html;
 
@@ -1909,8 +1950,378 @@ function renderChart() {
   });
 }
 
-function setupChartControls() {
-  $('chart-line-btn').addEventListener('click', () => {
+// 同步异常判定口径的界面状态（按钮 active + 口径说明文案）
+function syncOutlierUI() {
+  document.querySelectorAll('#outlier-method .seg').forEach(s => {
+    s.classList.toggle('active', s.dataset.method === state.outlierMethod);
+  });
+  const txt = {
+    mad: '稳健 z 分数（基于 MAD）> 3.5 或偏离中位数超 4×MAD',
+    sigma3: '偏离均值超过 3 倍标准差（均值 ± 3σ）',
+    iqr: '超出 Q1 − 1.5×IQR ~ Q3 + 1.5×IQR 范围（箱线图口径）'
+  }[state.outlierMethod] || '';
+  const cal = $('caliber-outlier');
+  if (cal) cal.textContent = txt;
+}
+
+/* ---------------- 答辩演示模式（v3.0） ---------------- */
+
+const presentState = { slides: [], idx: 0, chart: null, compareChart: null, open: false };
+
+function buildPresentSlides() {
+  const ds = state.ds;
+  if (!ds) return [];
+  const slides = [{ kind: 'overview' }, { kind: 'chart' }];
+  if (state.compareSets && state.compareSets.length > 1) slides.push({ kind: 'compare' });
+  slides.push({ kind: 'conclusion' });
+  return slides;
+}
+
+function presentOverviewHtml() {
+  const ds = state.ds;
+  const valid = state.stats.filter(s => s.ok);
+  const f = (v, d = 2) => LabAnalysis.fmt(v, d);
+  const t = ds.meta.time;
+  const rows = [];
+  rows.push(`<div class="ps-kv"><b>数据来源</b><span>${escapeHtml(ds.sourceLabel || '本地数据')}</span></div>`);
+  rows.push(`<div class="ps-kv"><b>有效数据</b><span>${ds.rows.length} 行 × ${ds.columns.length} 列${ds.meta.skippedRows ? `（跳过 ${ds.meta.skippedRows} 行）` : ''}</span></div>`);
+  if (t) rows.push(`<div class="ps-kv"><b>采样时段</b><span>${escapeHtml(t.startLabel)} — ${escapeHtml(t.endLabel)}</span></div>`);
+  const cards = valid.slice(0, 4).map(s => `
+    <div class="ps-stat">
+      <div class="ps-stat-label">${escapeHtml(s.pretty)}${s.unit ? '（' + escapeHtml(s.unit) + '）' : ''}</div>
+      <div class="ps-stat-value">${f(s.mean)}<span class="ps-stat-ci">± ${f(s.ciHalf)}</span></div>
+      <div class="ps-stat-sub">范围 ${f(s.min)} ~ ${f(s.max)} · σ ${f(s.std, 3)}</div>
+    </div>`).join('');
+  return `<div class="ps-slide">
+    <div class="ps-head"><h1>${escapeHtml($('report-title').value || '实验数据分析')}</h1>
+      <p class="ps-sub">${escapeHtml(ds.sourceLabel || '')}</p></div>
+    <div class="ps-kvs">${rows.join('')}</div>
+    <div class="ps-stats">${cards}</div>
+  </div>`;
+}
+
+function presentConclusionHtml() {
+  const txt = state.conclusion ? state.conclusion.text : '';
+  const valid = state.stats.filter(s => s.ok);
+  const outTotal = valid.reduce((n, s) => n + s.outliers.length, 0);
+  // 结论按句拆分，只取要点（前 6 句），投影时一行一句好读
+  const sentences = txt.split(/(?<=。)/).map(s => s.trim()).filter(Boolean);
+  const key = sentences.slice(0, 6);
+  return `<div class="ps-slide">
+    <div class="ps-head"><h1>分析结论</h1>
+      <p class="ps-sub">共 ${valid.length} 个数值通道 · ${state.ds.rows.length} 行有效数据 · 异常点 ${outTotal} 处</p></div>
+    <ul class="ps-points">${key.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul>
+  </div>`;
+}
+
+function presentChartHtml() {
+  return `<div class="ps-slide">
+    <div class="ps-head"><h1>数据曲线</h1>
+      <p class="ps-sub">${state.stats.filter(s => s.ok).slice(0, 6).map(s => escapeHtml(s.pretty)).join(' · ')}</p></div>
+    <div class="ps-chart-wrap"><canvas id="present-chart"></canvas></div>
+  </div>`;
+}
+
+function presentCompareHtml() {
+  return `<div class="ps-slide">
+    <div class="ps-head"><h1>多组对比</h1>
+      <p class="ps-sub">共 ${state.compareSets.length} 组 · 均值 ± 标准差带</p></div>
+    <div class="ps-chart-wrap"><canvas id="present-compare-chart"></canvas></div>
+  </div>`;
+}
+
+function renderPresentSlide() {
+  const stage = $('present-stage');
+  const s = presentState.slides[presentState.idx];
+  if (!s || !stage) return;
+  if (presentState.chart) { presentState.chart.destroy(); presentState.chart = null; }
+  if (presentState.compareChart) { presentState.compareChart.destroy(); presentState.compareChart = null; }
+
+  if (s.kind === 'overview') stage.innerHTML = presentOverviewHtml();
+  else if (s.kind === 'conclusion') stage.innerHTML = presentConclusionHtml();
+  else if (s.kind === 'chart') {
+    stage.innerHTML = presentChartHtml();
+    drawPresentChart();
+  } else if (s.kind === 'compare') {
+    stage.innerHTML = presentCompareHtml();
+    drawPresentCompareChart();
+  }
+  $('present-progress').textContent = `${presentState.idx + 1} / ${presentState.slides.length}`;
+  $('present-prev-btn').disabled = presentState.idx === 0;
+  $('present-next-btn').disabled = presentState.idx === presentState.slides.length - 1;
+  // 换页动画
+  stage.classList.remove('ps-in');
+  void stage.offsetWidth;
+  stage.classList.add('ps-in');
+}
+
+// 主图在演示里的放大版：复用当前图表的数据配置，重画一张（不动原图实例）
+function drawPresentChart() {
+  const cv = $('present-chart');
+  if (!cv || !state.chart) return;
+  const base = state.chart.config;
+  try {
+    presentState.chart = new Chart(cv, {
+      type: base.type,
+      data: JSON.parse(JSON.stringify(base.data)),
+      options: Object.assign({}, JSON.parse(JSON.stringify(base.options || {})), {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 420 },
+        plugins: Object.assign({}, (base.options && base.options.plugins) || {}, { zoom: undefined })
+      })
+    });
+  } catch (e) { /* 图表配置不可克隆时跳过图，仍显示标题 */ }
+}
+
+function drawPresentCompareChart() {
+  const cv = $('present-compare-chart');
+  if (!cv || !state.compareChart) return;
+  try {
+    const base = state.compareChart.config;
+    presentState.compareChart = new Chart(cv, {
+      type: base.type,
+      data: JSON.parse(JSON.stringify(base.data)),
+      options: Object.assign({}, JSON.parse(JSON.stringify(base.options || {})), {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 420 }
+      })
+    });
+  } catch (e) { /* 同上 */ }
+}
+
+function openPresent() {
+  if (!state.ds) { toast('请先导入数据', 'error'); return; }
+  presentState.slides = buildPresentSlides();
+  if (!presentState.slides.length) { toast('暂无可演示内容', 'error'); return; }
+  presentState.idx = 0;
+  presentState.open = true;
+  const ov = $('present-overlay');
+  ov.classList.remove('hidden');
+  document.body.classList.add('presenting');
+  $('present-title').textContent = $('report-title').value || '实验数据分析';
+  renderPresentSlide();
+  // 尝试进入全屏（用户手势内调用才允许；失败就退回普通覆盖层）
+  if (document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  }
+}
+
+function closePresent() {
+  presentState.open = false;
+  if (presentState.chart) { presentState.chart.destroy(); presentState.chart = null; }
+  if (presentState.compareChart) { presentState.compareChart.destroy(); presentState.compareChart = null; }
+  $('present-overlay').classList.add('hidden');
+  document.body.classList.remove('presenting');
+  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+}
+
+function presentStep(delta) {
+  const next = presentState.idx + delta;
+  if (next < 0 || next >= presentState.slides.length) return;
+  presentState.idx = next;
+  renderPresentSlide();
+}
+
+function setupPresent() {
+  $('present-btn').addEventListener('click', openPresent);
+  $('present-exit-btn').addEventListener('click', closePresent);
+  $('present-prev-btn').addEventListener('click', () => presentStep(-1));
+  $('present-next-btn').addEventListener('click', () => presentStep(1));
+  document.addEventListener('keydown', e => {
+    if (!presentState.open) return;
+    if (e.key === 'Escape') { closePresent(); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { presentStep(-1); e.preventDefault(); }
+    else if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { presentStep(1); e.preventDefault(); }
+  });
+  // 用户按 Esc 退出系统全屏时，一并收起覆盖层
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && presentState.open) closePresent();
+  });
+}
+
+/* ---------------- SPC 控制图（v3.0） ---------------- */
+
+function renderSPC() {
+  const ds = state.ds;
+  const sel = $('spc-col');
+  if (!ds || !sel) return;
+  const prev = state.spcSel;
+  sel.innerHTML = ds.numericColumns.map(c =>
+    `<option value="${c.index}">${escapeHtml(LabAnalysis.prettyColName(c))}</option>`).join('');
+  const keep = prev !== null && ds.numericColumns.some(c => c.index === prev);
+  state.spcSel = keep ? prev : (ds.numericColumns.length ? ds.numericColumns[0].index : null);
+  if (state.spcSel !== null) sel.value = state.spcSel;
+  const nSel = $('spc-n');
+  if (nSel) nSel.value = String(state.spcN || 5);
+  drawSPC();
+}
+
+function spcValues(col) {
+  const ds = state.ds;
+  const out = [];
+  ds.rows.forEach(r => {
+    const v = r.cells[col.index];
+    if (typeof v === 'number' && isFinite(v) && !r.badCells.has(col.index)) out.push(v);
+  });
+  return out;
+}
+
+function drawSPC() {
+  const ds = state.ds;
+  if (state.spcXChart) { state.spcXChart.destroy(); state.spcXChart = null; }
+  if (state.spcRChart) { state.spcRChart.destroy(); state.spcRChart = null; }
+  if (!ds || state.spcSel === null || typeof Chart === 'undefined' || typeof LabSPC === 'undefined') return;
+  const col = ds.numericColumns.find(c => c.index === state.spcSel);
+  if (!col) return;
+  const vals = spcValues(col);
+  const res = LabSPC.compute(vals, state.spcN || 5);
+  const u = LabAnalysis.unitOf(col);
+  const uTxt = u ? `（${u}）` : '';
+  const f = (v, d = 3) => LabAnalysis.fmt(v, d);
+
+  if (!res) {
+    $('spc-summary').innerHTML = `<div class="spc-empty">有效数据 ${vals.length} 点，按 n = ${state.spcN || 5} 分组不足 2 个子组，暂无控制图。减小子组大小或增加数据。</div>`;
+    $('spc-hint').textContent = '';
+    $('spc-note').textContent = '';
+    return;
+  }
+
+  $('spc-hint').textContent = `${vals.length} 点 → ${res.k} 个子组（每 ${res.n} 点一组${res.dropped ? `，末尾 ${res.dropped} 点未用` : ''}）`;
+
+  // 汇总卡：控制限数值
+  $('spc-summary').innerHTML = `
+    <div class="spc-metric"><b>均值图 Xbar${uTxt}</b>
+      <span>CL ${f(res.xCL)} · UCL ${f(res.xUCL)} · LCL ${f(res.xLCL)}</span></div>
+    <div class="spc-metric"><b>极差图 R${uTxt}</b>
+      <span>CL ${f(res.rCL)} · UCL ${f(res.rUCL)} · LCL ${f(res.rLCL)}</span></div>
+    <div class="spc-metric"><b>越界子组</b>
+      <span class="${res.outCount ? 'spc-bad' : 'spc-good'}">${res.outCount ? `${res.outCount} 处（均值 ${res.xOut.length} / 极差 ${res.rOut.length}）` : '无'}</span></div>`;
+
+  $('spc-note').textContent = `系数 A₂ = ${res.coef.A2}，D₃ = ${res.coef.D3}，D₄ = ${res.coef.D4}（子组大小 n = ${res.n}，GB/T 4091 常用表）；` +
+    `控制限按 3σ 口径：Xbar 图 CL = X̿、UCL/LCL = X̿ ± A₂·R̄；R 图 CL = R̄、UCL = D₄·R̄、LCL = D₃·R̄。` + LabSPC.verdict(res);
+
+  const labels = res.groups.map(g => `#${g.idx}`);
+  const xVals = res.groups.map(g => g.mean);
+  const rVals = res.groups.map(g => g.range);
+
+  // 控制限插件（两张图共用同一写法，按实例传参）
+  const makeLimitPlugin = (cl, ucl, lcl, color) => ({
+    id: 'spcLimits',
+    afterDatasetsDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      if (!chartArea) return;
+      const y = scales.y;
+      const draw = (v, dash, label) => {
+        const py = y.getPixelForValue(v);
+        if (!isFinite(py) || py < chartArea.top - 1 || py > chartArea.bottom + 1) return;
+        ctx.save();
+        ctx.setLineDash(dash);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(chartArea.left, py);
+        ctx.lineTo(chartArea.right, py);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = color;
+        ctx.font = '11px -apple-system, "Microsoft YaHei", sans-serif';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(label, chartArea.right - 4, py - 2);
+        ctx.restore();
+      };
+      draw(ucl, [5, 4], 'UCL');
+      draw(cl, [2, 3], 'CL');
+      draw(lcl, [5, 4], 'LCL');
+    }
+  });
+
+  const baseOpts = (titleTxt, outIdx) => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      x: { title: { display: true, text: '子组序号' }, grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true } },
+      y: { title: { display: true, text: titleTxt } }
+    },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          title: items => `第 ${items[0].label.replace('#', '')} 组`,
+          label: ctx => {
+            const i = ctx.dataIndex;
+            const g = res.groups[i];
+            const flag = outIdx.includes(g.idx) ? ' ⚠ 越界' : '';
+            const raw = `原始 ${f(g.vals[0])} ~ ${f(g.vals[g.vals.length - 1])}（${g.vals.length} 点）`;
+            return `${ctx.dataset.label}：${f(ctx.parsed.y)}${flag}　${raw}`;
+          }
+        }
+      }
+    }
+  });
+
+  const pointColors = (vals2, outIdx) => vals2.map((_, i) => (outIdx.includes(i + 1) ? '#ef4444' : '#0072B2'));
+  const pointRadius = (vals2, outIdx) => vals2.map((_, i) => (outIdx.includes(i + 1) ? 4.5 : 3));
+
+  state.spcXChart = new Chart($('spc-x-chart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: '子组均值',
+        data: xVals,
+        borderColor: '#0072B2',
+        backgroundColor: '#0072B2',
+        borderWidth: 1.4,
+        pointBackgroundColor: pointColors(xVals, res.xOut),
+        pointBorderColor: pointColors(xVals, res.xOut),
+        pointRadius: pointRadius(xVals, res.xOut),
+        tension: 0
+      }]
+    },
+    options: baseOpts(`子组均值${uTxt}`, res.xOut),
+    plugins: [makeLimitPlugin(res.xCL, res.xUCL, res.xLCL, '#2563eb')]
+  });
+
+  state.spcRChart = new Chart($('spc-r-chart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: '子组极差',
+        data: rVals,
+        borderColor: '#009E73',
+        backgroundColor: '#009E73',
+        borderWidth: 1.4,
+        pointBackgroundColor: pointColors(rVals, res.rOut),
+        pointBorderColor: pointColors(rVals, res.rOut),
+        pointRadius: pointRadius(rVals, res.rOut),
+        tension: 0
+      }]
+    },
+    options: baseOpts(`子组极差${uTxt}`, res.rOut),
+    plugins: [makeLimitPlugin(res.rCL, res.rUCL, res.rLCL, '#0f766e')]
+  });
+}
+
+function setupSPC() {
+  const colSel = $('spc-col');
+  const nSel = $('spc-n');
+  if (colSel) colSel.addEventListener('change', e => {
+    state.spcSel = parseInt(e.target.value, 10);
+    drawSPC();
+  });
+  if (nSel) nSel.addEventListener('change', e => {
+    state.spcN = parseInt(e.target.value, 10) || 5;
+    drawSPC();
+  });
+}
+
+function setupChartControls() {  $('chart-line-btn').addEventListener('click', () => {
     state.chartMode = 'line';
     $('chart-line-btn').classList.add('active');
     $('chart-scatter-btn').classList.remove('active');
@@ -1955,18 +2366,7 @@ function setupChartControls() {
     $('range-card').classList.add('hidden');
   });
   // v2.4：异常判定口径切换（MAD / 3σ / IQR）
-  const APPLY_OUTLIER = () => {
-    document.querySelectorAll('#outlier-method .seg').forEach(s => {
-      s.classList.toggle('active', s.dataset.method === state.outlierMethod);
-    });
-    const txt = {
-      mad: '稳健 z 分数（基于 MAD）> 3.5 或偏离中位数超 4×MAD',
-      sigma3: '偏离均值超过 3 倍标准差（均值 ± 3σ）',
-      iqr: '超出 Q1 − 1.5×IQR ~ Q3 + 1.5×IQR 范围（箱线图口径）'
-    }[state.outlierMethod] || '';
-    const cal = $('caliber-outlier');
-    if (cal) cal.textContent = txt;
-  };
+  const APPLY_OUTLIER = syncOutlierUI;
   document.querySelectorAll('#outlier-method .seg').forEach(seg => {
     seg.addEventListener('click', () => {
       state.outlierMethod = seg.dataset.method;
@@ -3384,6 +3784,17 @@ function setupReport() {
     setTimeout(() => window.print(), 150);
   });
 
+  // v3.0：导出 PPT 大纲（Markdown），按报告结构生成答辩演示大纲
+  $('export-ppt-btn').addEventListener('click', () => {
+    if (!state.ds) { toast('请先导入数据', 'error'); return; }
+    const info = Object.assign({ title: $('report-title').value, purpose: $('report-purpose').value, ops: state.ops.slice() }, extraInfo());
+    const md = LabReport.buildPptOutline(state.ds, state.stats, state.conclusion ? state.conclusion.text : '', info);
+    const t = ($('report-title').value || '实验报告').trim().replace(/[\\/:*?"<>|]/g, '_');
+    downloadFile(md, t + '-答辩大纲.md');
+    copyText(md);
+    toast('PPT 大纲已生成并复制到剪贴板', 'success');
+  });
+
   // v2.4：导出 Word（.docx，docx 库本地生成，含统计表与图表附录）
   $('export-docx-btn').addEventListener('click', () => {
     if (!state.reportText) { toast('请先生成报告', 'error'); return; }
@@ -3569,7 +3980,185 @@ function fillPrintRoot() {
   $('print-root').innerHTML = html;
 }
 
-/* ---------------- 初始化 ---------------- */
+/* ================= v4.0 创新功能接线 ================= */
+
+function setupV4() {
+
+  /* ---- 3D 数据星系 / 异常猎人 ---- */
+  const galaxyBtn = $('galaxy-open-btn');
+  if (galaxyBtn) galaxyBtn.addEventListener('click', () => {
+    if (!state.ds) { toast('请先导入数据', 'error'); return; }
+    if (!LabGalaxy.supported()) { toast('Three.js 未加载（vendor/three.min.js 缺失）', 'error'); return; }
+    try { LabGalaxy.open(state.ds, 'fly'); toast('3D 数据星系已开启：WASD 飞行 · R 回放 · Esc 退出', 'success'); }
+    catch (e) { toast(e.message, 'error'); }
+  });
+  const hunterBtn = $('hunter-open-btn');
+  if (hunterBtn) hunterBtn.addEventListener('click', () => {
+    if (!state.ds) { toast('请先导入数据', 'error'); return; }
+    if (!LabGalaxy.supported()) { toast('Three.js 未加载', 'error'); return; }
+    try {
+      LabGalaxy.open(state.ds, 'hunter');
+      toast('异常猎人开始：飞行器自动推进，点击红色晶体判定「真异常 / 误报」', 'success');
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  /* ---- 3D 实验台 + 虚拟仪表盘 ---- */
+  const benchBtn = $('bench-open-btn');
+  if (benchBtn) benchBtn.addEventListener('click', () => {
+    if (!LabBench.supported()) { toast('Three.js 未加载', 'error'); return; }
+    try {
+      LabBench.open();
+      // 打开时立即把当前采集值灌进去（有数据时可见联动）
+      toast('3D 实验台已开启：进采集页采集即可看到温度计 / 数码管实时联动；右上角可玩接线挑战', 'success');
+    } catch (e) { toast(e.message, 'error'); }
+  });
+  const dashBtn = $('dash-toggle-btn');
+  const dashRoot = $('dash-root');
+  if (dashBtn && dashRoot) {
+    dashBtn.addEventListener('click', () => {
+      state.dashOn = !state.dashOn;
+      dashBtn.textContent = '虚拟仪表：' + (state.dashOn ? '开' : '关');
+      dashRoot.classList.toggle('hidden', !state.dashOn);
+      if (state.dashOn) LabDashboard.mount(dashRoot);
+    });
+    LabDashboard.mount(dashRoot);
+    dashRoot.classList.toggle('hidden', !state.dashOn); // 默认开启（state.dashOn 初始 true）
+  }
+
+  /* ---- 实验复现包与指纹 ---- */
+  const rpExport = $('rp-export-btn');
+  if (rpExport) rpExport.addEventListener('click', async () => {
+    try {
+      rpExport.disabled = true;
+      const meta = await LabRepro.exportPackage();
+      showRpResult(`复现包已导出。<br>指纹：${meta.fingerprint}<br>共 ${meta.rows} 行 · ${meta.ops.length} 条流水 · ${meta.events.length} 个事件`);
+    } catch (e) { toast(e.message, 'error'); }
+    finally { rpExport.disabled = false; }
+  });
+  const rpVerifyBtn = $('rp-verify-btn');
+  const rpInput = $('rp-verify-input');
+  if (rpVerifyBtn && rpInput) {
+    rpVerifyBtn.addEventListener('click', () => rpInput.click());
+    rpInput.addEventListener('change', async () => {
+      const f = rpInput.files && rpInput.files[0];
+      rpInput.value = '';
+      if (!f) return;
+      try {
+        rpVerifyBtn.disabled = true;
+        showRpResult('验证中…');
+        const r = await LabRepro.verifyPackage(f);
+        showRpResult(r.ok
+          ? `<span style="color:#16a34a">✔ 指纹一致</span>：${r.actual}<br>数据 ${r.meta.rows} 行 · ${r.meta.created}<br>结论可信：报告由这份数据经这条流水得出`
+          : `<span style="color:#dc2626">✘ 指纹不一致</span><br>包内：${r.expect}<br>重算：${r.actual}<br>数据或流水在导出后被改动过`);
+      } catch (e) { showRpResult('验证失败：' + escapeHtml(e.message)); }
+      finally { rpVerifyBtn.disabled = false; }
+    });
+  }
+  const rpFp = $('rp-fp-btn');
+  if (rpFp) rpFp.addEventListener('click', async () => {
+    if (!state.ds) { toast('请先导入数据', 'error'); return; }
+    const fp = await LabRepro.fingerprint(rawTextOfV4(), state.ops);
+    showRpResult(`当前指纹：${fp}<br>输入 = 原始数据文本 + 处理流水（顺序敏感）`);
+  });
+  function showRpResult(html) {
+    const box = $('rp-result');
+    box.classList.remove('hidden');
+    box.innerHTML = html;
+  }
+  function rawTextOfV4() {
+    if (state.pending && state.pending.text) return state.pending.text;
+    return '';
+  }
+
+  /* ---- 分享链接 ---- */
+  const shareBtn = $('share-make-btn');
+  if (shareBtn) shareBtn.addEventListener('click', () => {
+    try {
+      const r = LabRepro.makeShareUrl();
+      if (r.size > 60000) {
+        toast('数据量较大（压缩后 ' + (r.size / 1024).toFixed(0) + ' KB），链接可能超长，建议改用「导出复现包」', 'warn');
+      }
+      copyText(r.url);
+      const box = $('share-result');
+      box.classList.remove('hidden');
+      box.innerHTML = `链接已复制（携带 ${r.rows} 行数据，压缩后 ${(r.size / 1024).toFixed(1)} KB）：<br>` +
+        `<input class="input" readonly value="${escapeHtml(r.url.slice(0, 220))}${r.url.length > 220 ? '…' : ''}">`;
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  /* ---- 自动模型辨识 ---- */
+  const midBtn = $('mid-run-btn');
+  const midC = $('mid-c-btn');
+  let midBest = null;
+  if (midBtn) midBtn.addEventListener('click', () => {
+    const ds = state.ds;
+    if (!ds) { toast('请先导入数据', 'error'); return; }
+    const xi = parseInt($('fit-x-col').value, 10);
+    const yi = parseInt($('fit-y-col').value, 10);
+    const xs = [], ys = [];
+    ds.rows.forEach(r => {
+      const a = r.cells[xi], b = r.cells[yi];
+      if (typeof a === 'number' && isFinite(a) && !r.badCells.has(xi) &&
+          typeof b === 'number' && isFinite(b) && !r.badCells.has(yi)) { xs.push(a); ys.push(b); }
+    });
+    const res = LabModelID.identify(xs, ys);
+    const box = $('mid-result');
+    box.classList.remove('hidden');
+    if (!res.best) {
+      midBest = null;
+      midC && midC.classList.add('hidden');
+      box.innerHTML = `<div class="cr-error">${escapeHtml(res.reason || '辨识失败')}</div>`;
+      return;
+    }
+    midBest = res.best;
+    midC && midC.classList.remove('hidden');
+    const rows = res.list.map((m, i) =>
+      `<tr${i === 0 ? ' style="background:#eff6ff"' : ''}><td>${i === 0 ? '★ ' : ''}${escapeHtml(m.name)}</td><td>${escapeHtml(m.formula)}</td><td>${m.r2.toFixed(4)}</td><td><b>${m.adjR2.toFixed(4)}</b></td><td>${LabAnalysis.fmt(m.maxRes, 4)}</td></tr>`).join('');
+    box.innerHTML =
+      `<div class="cr-value">推荐：${escapeHtml(res.best.name)}（修正 R² = ${res.best.adjR2.toFixed(4)}）</div>` +
+      `<table class="data-table" style="max-width:640px"><thead><tr><th>模型</th><th>公式</th><th>R²</th><th>修正 R²</th><th>最大残差</th></tr></thead><tbody>${rows}</tbody></table>` +
+      `<div class="cr-sub">按修正 R² 排序（惩罚参数数）；评分在原始 y 空间进行，不受变量变换影响。点「生成该模型 C 代码」可直接烧进芯片。</div>`;
+    pushOp(`模型自动辨识：${LabAnalysis.prettyColName(ds.columns[xi] || { name: 'X' })} → ${LabAnalysis.prettyColName(ds.columns[yi] || { name: 'Y' })}，最优 ${res.best.name}（修正 R² ${res.best.adjR2.toFixed(4)}）`);
+  });
+  if (midC) midC.addEventListener('click', () => {
+    if (!midBest) return;
+    const xi = parseInt($('fit-x-col').value, 10);
+    const xCol = (state.ds && state.ds.columns[xi]) || { name: 'raw' };
+    const code = LabModelID.cCode(midBest, LabAnalysis.prettyColName(xCol), 'sensor_convert');
+    downloadBlobV4(code, 'modelid_' + midBest.id + '.h');
+    copyText(code);
+  });
+  function downloadBlobV4(text, name) {
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast('已导出 ' + name, 'success');
+  }
+
+  /* ---- 分享链接恢复（页面带 #share= 时） ---- */
+  const shared = (typeof LabRepro !== 'undefined') && LabRepro.readShareHash();
+  if (shared) {
+    history.replaceState(null, '', location.pathname + location.search);
+    state.pending = { text: shared.text, fileName: '分享链接携带的数据', sourceType: 'text' };
+    state.pendingNote = '来自分享链接';
+    if (shared.opts) {
+      $('opt-skip-rows').value = shared.opts.skipRows ?? '0';
+      $('opt-time-col').value = shared.opts.timeCol || 'auto';
+      $('opt-delimiter').value = shared.opts.delimiter || 'auto';
+    }
+    if (shared.reportInfo) {
+      if (shared.reportInfo.title) $('report-title').value = shared.reportInfo.title;
+      if (shared.reportInfo.purpose) $('report-purpose').value = shared.reportInfo.purpose;
+    }
+    doParse();
+    setTimeout(() => toast('已从分享链接恢复实验数据并解析', 'success'), 600);
+  }
+}
+
+
 
 /* ---------------- 实验事件标注（v2.5） ---------------- */
 function fmtEventTime(x) {
@@ -3588,6 +4177,7 @@ function renderEventsList() {
   box.innerHTML = evs.map((ev, i) =>
     `<span class="event-item"><span class="event-time">${fmtEventTime(ev.x)}</span>` +
     `<span class="event-text">${escapeHtml(ev.label || '事件')}</span>` +
+    (ev.photo ? `<img class="event-photo" src="${ev.photo}" alt="事件照片">` : '') +
     `<button class="event-del" data-idx="${i}" title="删除">×</button></span>`
   ).join('');
   $('event-hint').textContent = `共 ${evs.length} 个事件，已标注在趋势图上`;
@@ -3608,14 +4198,40 @@ function setupEvents() {
     const x = Number(raw);
     if (!raw || !isFinite(x)) { toast('请先填写或点击图表选择一个时刻', 'warn'); return; }
     const label = ($('event-label').value || '').trim() || '事件';
-    state.events.push({ x, label });
+    const ev = { x, label };
+    if (state.pendingEventPhoto) { ev.photo = state.pendingEventPhoto; state.pendingEventPhoto = null; }
+    state.events.push(ev);
     state.events.sort((a, b) => a.x - b.x);
     $('event-x').value = '';
     $('event-label').value = '';
     renderEventsList();
     if (state.chart) state.chart.update('none');
-    pushOp(`标注事件「${label}」@ ${fmtEventTime(x)}`);
+    pushOp(`标注事件「${label}」@ ${fmtEventTime(x)}${ev.photo ? '（附现场照片）' : ''}`);
   });
+  // v4.0 拍照关联：选择/拍摄一张现场照片，压缩后附加到下一个添加的事件
+  const photoInput = $('event-photo-input');
+  const photoBtn = $('event-photo-btn');
+  if (photoBtn && photoInput) {
+    photoBtn.addEventListener('click', () => photoInput.click());
+    photoInput.addEventListener('change', () => {
+      const f = photoInput.files && photoInput.files[0];
+      photoInput.value = '';
+      if (!f) return;
+      const img = new Image();
+      img.onload = () => {
+        // 压缩到最长边 480px 的 JPEG（质量控制体积，照片仅存本地与导出包）
+        const scale = Math.min(1, 480 / Math.max(img.width, img.height));
+        const cv = document.createElement('canvas');
+        cv.width = Math.max(1, Math.round(img.width * scale));
+        cv.height = Math.max(1, Math.round(img.height * scale));
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        state.pendingEventPhoto = cv.toDataURL('image/jpeg', 0.6);
+        toast('照片已就绪，填好时刻与描述后点「添加事件」即可关联', 'success');
+      };
+      img.onerror = () => toast('照片读取失败', 'error');
+      img.src = URL.createObjectURL(f);
+    });
+  }
 }
 
 /* ================= v2.6 工具箱 ================= */
@@ -3925,7 +4541,8 @@ function renderCompareCols() {
   if (!sel) return;
   const prev = sel.value;
   const cols = compareCommonCols();
-  sel.innerHTML = cols.map(c => `<option value="${c.index}">${escapeHtml(LabAnalysis.prettyColName(c))}</option>`).join('');
+  // v4.0 修复 P1：value 存列名（不是 index）——各组列顺序可能不同，按 index 取会静默错位
+  sel.innerHTML = cols.map(c => `<option value="${escapeHtml(c.name)}">${escapeHtml(LabAnalysis.prettyColName(c))}</option>`).join('');
   if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
@@ -3982,12 +4599,17 @@ function renderCompareChart() {
   grp.innerHTML = all.map(g => `<span class="compare-chip"><b>${escapeHtml(g.label)}</b>${g.ds.rows.length} 行</span>`).join('');
   const sel = $('compare-col');
   if (!sel.options.length) { wrap.classList.add('hidden'); tbl.innerHTML = ''; return; }
-  const colIdx = parseInt(sel.value, 10);
-  const col = all[0].ds.columns.find(c => c.index === colIdx) || all[0].ds.numericColumns[0];
-  const series = all.map(g => g.ds.rows.map(r => {
-    const v = r.cells[colIdx];
-    return (v === null || v === undefined) ? null : v;
-  }));
+  // v4.0 修复 P1：按列名在各组里各取各的 index（B 组列序不同时不再错位）
+  const colName = sel.value;
+  const col = all[0].ds.numericColumns.find(c => c.name === colName) || all[0].ds.numericColumns[0];
+  const series = all.map(g => {
+    const c = g.ds.columns.find(x => x.name === col.name);
+    if (!c) return [];
+    return g.ds.rows.map(r => {
+      const v = r.cells[c.index];
+      return (v === null || v === undefined) ? null : v;
+    });
+  });
   const nMax = Math.max(...series.map(s => s.length));
   const means = [], stds = [];
   for (let i = 0; i < nMax; i++) {
@@ -4168,7 +4790,8 @@ function init() {
   setupCalib();
   setupFit();
   setupFilter();
-  setupChartControls();
+   setupChartControls();
+   setupSPC();
   setupEvents();
   setupDeepAnalysis();
   setupReport();
@@ -4176,10 +4799,13 @@ function init() {
    setupToolbox();
    setupUncertainty();
    setupCompare();
+   setupPresent();
+  setupV4();
   $('export-csv-btn').addEventListener('click', exportDataCsv);
   $('export-xlsx-btn').addEventListener('click', exportDataXlsx);
   LabProject.wireBanner();
   LabProject.wireImportExport();
+  LabProject.wireLibrary();
   LabProject.offerRestore();
   updateCharCount();
 }

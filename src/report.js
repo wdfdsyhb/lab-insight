@@ -526,8 +526,7 @@ const LabReport = (() => {
     L.push('  · 数据趋势图上每个数据点的误差棒即该通道的 ±U（扩展不确定度），可直接看出测量结果的波动区间。');
 
     // 4. 综合判断
-    const r0 = uRows[0];
-    const rel = Math.abs(r0.s.mean) > 1e-9 ? (r0.U / Math.abs(r0.s.mean)) * 100 : Infinity;
+    const r0 = uRows[0];    const rel = Math.abs(r0.s.mean) > 1e-9 ? (r0.U / Math.abs(r0.s.mean)) * 100 : Infinity;
     let cred;
     if (rel < 1) cred = '测量结果可信度高';
     else if (rel < 5) cred = '测量结果可信度中等，增加重复测量次数可收敛不确定度';
@@ -548,5 +547,94 @@ const LabReport = (() => {
     return L;
   }
 
-  return { buildReport, toHtml, buildStaticHtml, buildDocx };
+  /* PPT 大纲（v3.0）：按报告结构生成答辩演示大纲（Markdown）
+   * 每页用 `## 第 N 页 · 标题`，页内用 - 列表；可直接粘进 PPT 备注或复制到便签
+   */
+  function buildPptOutline(ds, stats, conclusionText, info) {
+    info = info || {};
+    const title = (info.title || '').trim() || '实验数据记录与分析';
+    const purpose = (info.purpose || '').trim();
+    const f = (v, d = 2) => LabAnalysis.fmt(v, d);
+    const valid = stats.filter(s => s.ok);
+    const L = [];
+    let page = 0;
+    const P = (t) => { page++; L.push(`## 第 ${page} 页 · ${t}`); L.push(''); };
+
+    L.push(`# ${title} · 答辩演示大纲`);
+    L.push('');
+    L.push(`> 由 LabInsight 按报告结构自动生成 · 共 @@PAGES@@ 页 · 建议每页 30 秒`);
+    L.push('');
+
+    /* 1. 标题页 */
+    P('标题页');
+    L.push(`- 题目：${title}`);
+    if (purpose) L.push(`- 一句话说明：${purpose.split(/\r?\n/)[0]}`);
+    L.push(`- 数据规模：${ds.rows.length} 行 × ${ds.columns.length} 列${ds.meta.skippedRows ? `（跳过 ${ds.meta.skippedRows} 行脏数据）` : ''}`);
+    if (ds.meta.time) L.push(`- 采集时段：${ds.meta.time.startLabel} — ${ds.meta.time.endLabel}`);
+    L.push('');
+
+    /* 2. 数据概览 */
+    P('数据概览');
+    L.push(`- 数据来源：${ds.sourceLabel || '本地导入'}`);
+    L.push(`- 有效数据：${ds.rows.length} 行，${valid.length} 个数值通道（${valid.map(s => s.pretty).join('、')}）`);
+    if (ds.meta.skippedRows) L.push(`- 数据清洗：自动跳过 ${ds.meta.skippedRows} 行无法解析的脏行`);
+    L.push('');
+    L.push('| 通道 | 均值 | 标准差 | 范围 | 异常点 |');
+    L.push('| --- | --- | --- | --- | --- |');
+    valid.slice(0, 6).forEach(s => {
+      L.push(`| ${s.pretty} | ${f(s.mean)}${s.unit || ''} | ${f(s.std, 3)} | ${f(s.min)} ~ ${f(s.max)} | ${s.outliers.length} |`);
+    });
+    L.push('');
+
+    /* 3. 主图 */
+    P('数据曲线（主图）');
+    L.push('- 展示：智能分析页签「数据曲线」截图，或「导出 PNG（300dpi）」插进 PPT');
+    L.push('- 讲解要点：整体趋势 / 波动幅度 / 明显拐点或台阶');
+    valid.slice(0, 3).forEach(s => {
+      const dir = s.last > s.first * 1.005 ? '上升' : s.last < s.first * 0.995 ? '下降' : '平稳';
+      L.push(`- ${s.pretty}：${dir}，从 ${f(s.first)} 到 ${f(s.last)}${s.unit || ''}，均值 ${f(s.mean)}${s.unit || ''}`);
+    });
+    L.push('');
+
+    /* 4. 误差分析 */
+    P('误差分析与不确定度');
+    const a = info.uncertainty ? (Number(info.uncertainty.a) || 0) : 0;
+    const k = info.uncertainty && Number(info.uncertainty.k) ? Number(info.uncertainty.k) : 2;
+    const r0 = valid[0];
+    if (r0) {
+      const n = Math.max(1, r0.values.length);
+      const uA = r0.std / Math.sqrt(n);
+      const uB = a / Math.sqrt(3);
+      const uc = Math.sqrt(uA * uA + uB * uB);
+      const U = k * uc;
+      const rel = Math.abs(r0.mean) > 1e-9 ? (U / Math.abs(r0.mean)) * 100 : Infinity;
+      L.push(`- 以 ${r0.pretty} 为例：uA = ${f(uA)}，uB = ${f(uB)}（仪器允差 a = ${a}），uC = ${f(uc)}，U = ${f(U)}（k = ${k}）`);
+      L.push(`- 结果表示：${f(r0.mean)} ± ${f(U)}${r0.unit || ''}，相对扩展不确定度约 ${f(rel, 2)}%`);
+      L.push(`- 主要误差来源：${a <= 0 ? '当前仅计 A 类（重复性），补填仪器允差后可完整评估' : (uA >= uB ? 'A 类（重复性波动）主导' : 'B 类（仪器允差）主导')}`);
+    }
+    const sqRate = ds.meta && ds.meta.time ? (ds.rows.length - 1) / ((ds.meta.time.end - ds.meta.time.start) / (ds.meta.time.mode === 'date' ? 1000 : 1)) : null;
+    if (sqRate && isFinite(sqRate)) L.push(`- 采样质量：实际平均采样率约 ${f(sqRate, 2)} Hz`);
+    if (info.evalRecord) L.push(`- 标定评估：${String(info.evalRecord).replace(/^- /, '')}`);
+    L.push('');
+
+    /* 5. 结论 */
+    P('分析结论');
+    const sentences = String(conclusionText || '').split(/(?<=。)/).map(s => s.trim()).filter(Boolean);
+    sentences.slice(0, 5).forEach(s => L.push(`- ${s}`));
+    if (!sentences.length) L.push('- （尚未生成结论，先在「智能分析」页签生成）');
+    L.push('');
+
+    /* 6. 收尾 */
+    P('总结与展望');
+    const totalOut = valid.reduce((n, s) => n + s.outliers.length, 0);
+    L.push(`- 数据质量：${totalOut === 0 ? '各通道未发现异常点，数据连续性好' : `${totalOut} 处异常点已定位并复核`}`);
+    L.push('- 可改进：延长采样时长 / 增加重复测量次数以收敛不确定度 / 完善标定流程');
+    L.push('- 演示提示：智能分析页签点「答辩演示」可全屏投影，← → 翻页');
+    L.push('');
+
+    // 回填总页数
+    return L.join('\n').replace('@@PAGES@@', String(page));
+  }
+
+  return { buildReport, toHtml, buildStaticHtml, buildDocx, buildPptOutline };
 })();

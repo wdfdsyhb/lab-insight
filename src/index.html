@@ -90,7 +90,7 @@
           <h2>粘贴串口日志</h2>
           <span class="card-hint">带前缀、乱码、单位都没关系，会自动清洗</span>
         </div>
-        <textarea id="paste-area" class="paste-area" placeholder="把串口助手里的日志直接粘到这里，例如：&#10;[INFO] sensor init ok&#10;21:34:05.001 temp=25.32 humi=61.98 press=1012.3&#10;21:34:06.222 temp=25.34 humi=62.05 press=1012.4&#10;..."></textarea>
+        <textarea id="paste-area" class="paste-area" placeholder="串口日志或表格都能粘：&#10;· 串口日志：[INFO] sensor init ok&#10;21:34:05 temp=25.32 humi=61.98&#10;· 规整表格 / CSV：首行写列名，如 time,temp,humi&#10;带表头时建议也用「文件导入」，列名识别更稳"></textarea>
         <div class="row-actions">
           <button class="btn btn-primary" id="use-paste-btn">使用粘贴内容</button>
           <button class="btn btn-ghost" id="clear-paste-btn">清空</button>
@@ -119,6 +119,11 @@
           <button class="btn btn-outline" id="serial-sim-btn" title="无硬件时演示：软件生成带毛刺的数据流，效果与真串口一致">模拟串口数据</button>
         </div>
         <div class="serial-note" id="serial-note">需要 Chrome / Edge 桌面版浏览器；数据在本机浏览器内采集，不上传服务器。没有硬件时点「模拟串口数据」可体验完整流程。</div>
+        <div class="row-actions">
+          <button class="btn btn-outline btn-sm" id="bench-open-btn" title="打开 3D 数字孪生实验台：实时数据驱动温度计 / 数码管，可玩接线挑战">🖥 3D 实验台</button>
+          <button class="btn btn-ghost btn-sm" id="dash-toggle-btn" title="采集时显示拟物虚拟仪表（温度计 / 表盘 / 数码管）">虚拟仪表：开</button>
+        </div>
+        <div class="dash-root hidden" id="dash-root"></div>
         <div class="hidden" id="serial-running-row">
           <div class="serial-status">
             <span class="serial-dot" id="serial-dot"></span>
@@ -144,6 +149,19 @@
             <button class="btn btn-ghost" id="serial-cancel-btn">取消（丢弃数据）</button>
           </div>
         </div>
+      </div>
+
+      <!-- 实验项目库（v3.0） -->
+      <div class="card fade-in" id="project-lib-card">
+        <div class="card-head">
+          <h2>实验项目库</h2>
+          <span class="card-hint" id="project-lib-count"></span>
+        </div>
+        <div class="project-lib-actions">
+          <button class="btn btn-primary btn-sm" id="project-save-btn" title="把当前数据、设置与报告信息存成一个实验，可随时切回">存为实验</button>
+          <span class="project-lib-hint">存过的实验会留在本机，随时打开、重命名或删除</span>
+        </div>
+        <div class="project-list" id="project-list"></div>
       </div>
 
       <!-- 示例数据 -->
@@ -630,6 +648,14 @@
           </div>
           <div class="batch-note">用上方同一组 X / Y 列：灵敏度 = 拟合斜率 k，零点输出 = 截距 b，线性度 = 最大残差 / 输出量程，迟滞 = 前后半程各自拟合的斜率差异（按行序前半 / 后半，简版判定）。</div>
           <div class="calc-result hidden" id="eval-result"></div>
+
+          <div class="batch-title">自动模型辨识：7 种候选模型竞选最优</div>
+          <div class="batch-controls">
+            <button class="btn btn-primary" id="mid-run-btn">自动辨识最优模型</button>
+            <button class="btn btn-outline hidden" id="mid-c-btn">生成该模型 C 代码</button>
+          </div>
+          <div class="batch-note">对上方同一组 X / Y 列自动尝试 线性 / 二次 / 三次 / 指数 / 对数 / 幂函数 / 倒数 七种模型，按修正 R²（惩罚参数数）排序推荐，预测值反变换回原始空间再评分，避免变换域 R² 虚高。</div>
+          <div class="calc-result hidden" id="mid-result"></div>
         </div>
 
         <!-- 换算记录 -->
@@ -672,6 +698,35 @@
           <button class="btn btn-outline" id="cg-ino-btn" title="生成可直接烧录的 Arduino 完整示例（setup + loop + 换算函数）">下载 Arduino .ino</button>
         </div>
         <pre class="code-out" id="cg-output">点「生成 C 代码」，按上面选择的来源，读取校准页当前参数生成代码。</pre>
+      </div>
+
+      <!-- 5. 实验复现包与数据指纹 -->
+      <div class="card fade-in">
+        <div class="card-head">
+          <h2>实验复现包与数据指纹</h2>
+          <span class="card-hint">SHA-256(数据 + 处理流水) —— 报告结论可验证、防篡改</span>
+        </div>
+        <div class="row-actions">
+          <button class="btn btn-primary" id="rp-export-btn">导出复现包 (.zip)</button>
+          <button class="btn btn-outline" id="rp-verify-btn">验证复现包</button>
+          <button class="btn btn-ghost" id="rp-fp-btn">只算当前指纹</button>
+          <input type="file" id="rp-verify-input" accept=".zip" hidden>
+        </div>
+        <div class="batch-note">复现包含 package.json（指纹 / 流水 / 设置 / 事件 / 口径）、data.raw（原始输入）、report.txt、charts/。验证时重算指纹与包内比对：一致即证明结论由这份数据经这条流水得出。</div>
+        <div class="calc-result hidden" id="rp-result"></div>
+      </div>
+
+      <!-- 6. 无后端分享链接 -->
+      <div class="card fade-in">
+        <div class="card-head">
+          <h2>分享链接（数据不上传）</h2>
+          <span class="card-hint">数据 LZ 压缩进 URL，对方打开即恢复并解析</span>
+        </div>
+        <div class="row-actions">
+          <button class="btn btn-primary" id="share-make-btn">生成分享链接并复制</button>
+        </div>
+        <div class="batch-note">把原始数据 + 解析设置 + 报告信息压缩进链接的 #share= 段。数据不经过任何服务器，链接长度有限（超长会提示改用复现包）。用本工具打开带 #share= 的链接会弹出恢复横幅。</div>
+        <div class="calc-result hidden" id="share-result"></div>
       </div>
 
       <!-- 2. 采样率 / 定时器助手 -->
@@ -761,6 +816,11 @@
         <div class="page-head">
           <h1>智能分析</h1>
           <p class="page-desc">统计指标、趋势图表与自动生成的分析结论。</p>
+        </div>
+
+        <div class="row-actions" style="margin-bottom:14px">
+          <button class="btn btn-primary btn-sm" id="present-btn" title="全屏投影视图，键盘 ← → 翻页，适合答辩与汇报">答辩演示</button>
+          <span class="card-hint" style="margin-left:4px">全屏大字视图，← → 翻页，Esc 退出</span>
         </div>
 
         <h2 class="section-title">统计指标</h2>
@@ -869,6 +929,47 @@
           <div class="corr-legend">第一组为当前数据（A 组）；各组按第 1、2、3…个采样点对齐（重复实验通常采样率相同）；某组点数不足时该点跳过不计入均值。</div>
         </div>
 
+        <!-- SPC 控制图（v3.0）：Xbar-R 均值-极差控制图 -->
+        <div class="card fade-in" id="spc-card">
+          <div class="card-head">
+            <h2>SPC 控制图</h2>
+            <span class="card-hint">Xbar-R 均值-极差控制图，±3σ 控制限，越界子组标红</span>
+          </div>
+          <div class="spc-controls">
+            <label class="field field-inline">
+              <span class="field-label">监控通道</span>
+              <select id="spc-col" class="input input-sm"></select>
+            </label>
+            <label class="field field-inline">
+              <span class="field-label">子组大小 n</span>
+              <select id="spc-n" class="input input-sm">
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5" selected>5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+                <option value="9">9</option>
+                <option value="10">10</option>
+              </select>
+            </label>
+            <span class="spc-hint" id="spc-hint"></span>
+          </div>
+          <div class="spc-summary" id="spc-summary"></div>
+          <div class="spc-charts">
+            <div class="spc-chart-block">
+              <div class="spc-chart-title">均值图 <span class="spc-chart-sub">Xbar（子组均值）</span></div>
+              <div class="chart-wrap spc-wrap"><canvas id="spc-x-chart"></canvas></div>
+            </div>
+            <div class="spc-chart-block">
+              <div class="spc-chart-title">极差图 <span class="spc-chart-sub">R（子组极差）</span></div>
+              <div class="chart-wrap spc-wrap"><canvas id="spc-r-chart"></canvas></div>
+            </div>
+          </div>
+          <div class="card-hint spc-note" id="spc-note"></div>
+        </div>
+
         <h2 class="section-title">趋势图表</h2>
         <div class="card fade-in">
           <div class="card-head">
@@ -881,6 +982,8 @@
               <button class="btn btn-ghost btn-sm" id="chart-reset-btn">重置缩放</button>
               <button class="btn btn-ghost btn-sm" id="export-chart-png-btn">导出 PNG</button>
               <button class="btn btn-ghost btn-sm" id="export-chart-svg-btn">导出 SVG</button>
+              <button class="btn btn-outline btn-sm" id="galaxy-open-btn" title="把多通道数据升维成 3D 地形：WASD 飞行，异常点是发光晶体，事件是石碑">🌌 3D 数据星系</button>
+              <button class="btn btn-outline btn-sm" id="hunter-open-btn" title="游戏模式：飞行器沿数据跑道推进，点击晶体判定真异常 / 误报，结果写入报告流水">🎯 异常猎人</button>
               <label class="chart-toggle" title="按测量不确定度 U 给每个数据点加误差棒">
                 <input type="checkbox" id="chart-errbar-toggle" checked> 误差棒
               </label>
@@ -920,6 +1023,8 @@
               <input type="text" id="event-label" class="input" placeholder="例如：开始加热 / 此时更换探头">
             </label>
             <button class="btn btn-primary btn-sm" id="event-add-btn">添加事件</button>
+            <button class="btn btn-outline btn-sm" id="event-photo-btn" title="调本机摄像头抓一张现场照片，与该时刻一起存进事件（仅本地，随报告导出）">📷 拍照关联</button>
+            <input type="file" id="event-photo-input" accept="image/*" capture="environment" hidden>
           </div>
           <div class="events-list" id="events-list"></div>
           <div class="card-hint" id="event-hint"></div>
@@ -1155,6 +1260,7 @@
               <button class="btn btn-outline" id="export-pdf-btn">导出 PDF</button>
               <button class="btn btn-outline" id="export-docx-btn" title="生成带样式与图表的 Word 文档，可直接交课设">导出 Word</button>
               <button class="btn btn-outline" id="export-html-btn" title="报告与图表打包成单个 HTML，双击即可查看">导出单文件 HTML</button>
+              <button class="btn btn-outline" id="export-ppt-btn" title="按报告结构生成答辩演示大纲（Markdown），可直接粘进 PPT 或复制到便签">导出 PPT 大纲</button>
               <button class="btn btn-outline" id="export-latex-btn">复制 LaTeX 统计表</button>
             </div>
           </div>
@@ -1168,20 +1274,45 @@
 
   <div id="print-root"></div>
 
+  <!-- 答辩演示模式（v3.0）：全屏投影视图，← → 翻页，Esc 退出 -->
+  <div class="present-overlay hidden" id="present-overlay" role="dialog" aria-modal="true" aria-label="答辩演示">
+    <div class="present-bar">
+      <span class="present-title" id="present-title">演示</span>
+      <span class="present-progress" id="present-progress"></span>
+      <span class="present-actions">
+        <button class="btn btn-ghost btn-sm" id="present-prev-btn">← 上一页</button>
+        <button class="btn btn-ghost btn-sm" id="present-next-btn">下一页 →</button>
+        <button class="btn btn-ghost btn-sm" id="present-exit-btn">退出（Esc）</button>
+      </span>
+    </div>
+    <div class="present-stage" id="present-stage"></div>
+    <div class="present-hint">← → 翻页 · 空格下一页 · Esc 退出 · 全屏后更像 PPT</div>
+  </div>
+
   <footer class="footer">
     LabInsight · 数据仅在浏览器本地处理，不上传服务器
   </footer>
 
   <div class="toast-root" id="toast-root"></div>
 
+  <script src="vendor/lz-string.min.js"></script>
+  <script src="vendor/jszip.min.js"></script>
+  <script src="vendor/three.min.js"></script>
   <script src="sample-data.js"></script>
   <script src="parser.js"></script>
   <script src="analysis.js"></script>
+  <script src="spc.js"></script>
   <script src="calib.js"></script>
   <script src="fit.js"></script>
+  <script src="modelid.js"></script>
+  <script src="repro.js"></script>
+  <script src="engine.js"></script>
   <script src="filter.js"></script>
   <script src="fft.js"></script>
   <script src="serial.js"></script>
+  <script src="dashboard.js"></script>
+  <script src="galaxy.js"></script>
+  <script src="bench.js"></script>
   <script src="report.js"></script>
   <script src="project.js"></script>
   <script src="app.js"></script>

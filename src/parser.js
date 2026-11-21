@@ -536,7 +536,21 @@ const LabParser = (() => {
 
       // 规整来源（CSV / Excel / 用户指定了分隔符）→ 走表格路径；
       // 只有来源不明（txt / 粘贴）时才尝试串口日志识别
-      const looksSerial = !isCsv && !userSetDelimiter && detectSerial(text);
+      let looksSerial = !isCsv && !userSetDelimiter && detectSerial(text);
+      if (looksSerial && (delimChoice === ',' || delimChoice === '\t' || delimChoice === ';' || delimChoice === '|')) {
+        // 双信号（既像串口、又嗅探到 CSV 类分隔符）：两条路都试。
+        // 表格路径必须出「表头命名的数值列」才优先（自动名 列N/数值N 不算），
+        // 修粘贴带表头 CSV 被误判成串口日志、报「没有同名的数值列」的问题；
+        // 空格分隔的串口日志不进这条路，仍按串口解析。
+        const tblDs = parseTable(textToAoa(text, delimChoice), { ...opt, sourceType: 'table', delimiter: delimChoice });
+        const tblGood = tblDs.numericColumns.some(c =>
+          c.name && !/^列\d*$/.test(c.name) && !/^数值\d*$/.test(c.name)
+        );
+        if (tblGood) {
+          ds = tblDs;
+          looksSerial = false;
+        }
+      }
       if (looksSerial) {
         ds = parseSerial(text, opt);
       } else if (isCsv || userSetDelimiter || delimChoice || looksTable(text)) {

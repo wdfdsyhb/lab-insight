@@ -1374,3 +1374,105 @@ table.data-table {
 .ntc-2pt-grid { grid-template-columns:repeat(4, minmax(0, 1fr)); }
 #ntc-twopoint-block .row-actions { align-items:center; gap:10px; flex-wrap:wrap; }
 #ntc-2pt-note { line-height:1.5; }
+
+/* ===== v3.0 实验项目库 ===== */
+.project-lib-actions { display:flex; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
+.project-lib-hint { font-size:12.5px; color:var(--text-4); }
+.project-list { display:flex; flex-direction:column; gap:8px; }
+.project-empty { font-size:13px; color:var(--text-4); padding:14px 16px; border:1px dashed var(--border); border-radius:8px; text-align:center; }
+.project-item { display:flex; align-items:center; gap:12px; padding:10px 14px; border:1px solid var(--border); border-radius:8px; background:#fff; transition:border-color .15s ease, box-shadow .15s ease, transform .15s ease; animation:projIn .22s ease both; }
+.project-item:hover { border-color:#c7d7f5; box-shadow:0 2px 10px rgba(29,78,216,.07); }
+.project-item.current { border-color:#93b4f5; background:#f7faff; }
+@keyframes projIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+.pi-main { flex:1; min-width:0; }
+.pi-name { font-size:13.5px; font-weight:600; color:var(--text-1); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pi-meta { font-size:12px; color:var(--text-4); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pi-actions { display:flex; gap:4px; flex-shrink:0; }
+.pi-actions .btn { padding:3px 9px; font-size:12px; }
+@media (max-width:640px) {
+  .project-item { flex-wrap:wrap; }
+  .pi-actions { width:100%; justify-content:flex-end; }
+}
+
+/* ===== v3.0 答辩演示模式 ===== */
+body.presenting { overflow:hidden; }
+.present-overlay { position:fixed; inset:0; z-index:9000; background:#fbfcfe; display:flex; flex-direction:column;
+  animation:psFade .22s ease both; }
+.present-overlay.hidden { display:none; }
+@keyframes psFade { from { opacity:0; } to { opacity:1; } }
+.present-bar { display:flex; align-items:center; gap:14px; padding:10px 22px; border-bottom:1px solid var(--border);
+  background:#fff; flex-shrink:0; }
+.present-title { font-size:13px; font-weight:600; color:var(--text-2); max-width:44vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.present-progress { font-size:12.5px; color:var(--text-4); font-variant-numeric:tabular-nums; }
+.present-actions { margin-left:auto; display:flex; gap:6px; }
+.present-actions .btn[disabled] { opacity:.38; cursor:default; }
+.present-stage { flex:1; min-height:0; padding:32px 48px; overflow:auto; }
+.present-stage.ps-in { animation:psIn .26s cubic-bezier(.22,.61,.36,1) both; }
+@keyframes psIn { from { opacity:0; transform:translateY(10px) scale(.995); } to { opacity:1; transform:none; } }
+.ps-slide { height:100%; display:flex; flex-direction:column; gap:22px; max-width:1320px; margin:0 auto; }
+.ps-head h1 { font-size:clamp(26px, 3.2vw, 42px); line-height:1.25; margin:0 0 6px; color:var(--text-1); letter-spacing:-.5px; }
+.ps-sub { font-size:clamp(13px, 1.3vw, 17px); color:var(--text-4); margin:0; }
+.ps-kvs { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px 22px; }
+.ps-kv { display:flex; gap:10px; font-size:clamp(13px, 1.25vw, 16px); color:var(--text-2); }
+.ps-kv b { color:var(--text-4); font-weight:500; flex-shrink:0; }
+.ps-stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:16px; }
+.ps-stat { border:1px solid var(--border); border-radius:12px; background:#fff; padding:16px 18px;
+  animation:psIn .3s ease both; }
+.ps-stat-label { font-size:clamp(12px, 1.1vw, 14px); color:var(--text-4); margin-bottom:6px; }
+.ps-stat-value { font-size:clamp(24px, 2.6vw, 36px); font-weight:650; color:var(--text-1); font-variant-numeric:tabular-nums;
+  letter-spacing:-.5px; white-space:nowrap; }
+.ps-stat-ci { font-size:.5em; font-weight:500; color:var(--text-3); margin-left:4px; }
+.ps-stat-sub { font-size:clamp(11px, 1vw, 13px); color:var(--text-4); margin-top:6px; }
+.ps-points { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:14px; }
+.ps-points li { position:relative; padding-left:22px; font-size:clamp(15px, 1.55vw, 21px); line-height:1.62; color:var(--text-2); }
+.ps-points li::before { content:""; position:absolute; left:4px; top:.62em; width:7px; height:7px; border-radius:50%;
+  background:#2563eb; }
+.ps-chart-wrap { flex:1; min-height:320px; position:relative; border:1px solid var(--border); border-radius:12px;
+  background:#fff; padding:14px; }
+.ps-chart-wrap canvas { width:100% !important; height:100% !important; }
+.present-hint { flex-shrink:0; text-align:center; font-size:12px; color:var(--text-4); padding:8px 0 12px; }
+@media (max-width:720px) {
+  .present-stage { padding:18px; }
+  .ps-stat-value { font-size:22px; }
+}
+
+/* ===== v3.0 SPC 控制图 ===== */
+.spc-controls { display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:12px; }
+.spc-controls .field-inline { display:flex; align-items:center; gap:8px; }
+.spc-hint { font-size:12.5px; color:var(--text-4); }
+.spc-summary { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:10px; margin-bottom:14px; }
+.spc-metric { border:1px solid var(--border); border-radius:8px; padding:10px 14px; background:#fbfcfe; font-size:12.5px; color:var(--text-2); }
+.spc-metric b { display:block; font-size:12.5px; color:var(--text-3); font-weight:600; margin-bottom:4px; }
+.spc-metric span { font-variant-numeric:tabular-nums; }
+.spc-bad { color:#dc2626; font-weight:600; }
+.spc-good { color:#15803d; font-weight:600; }
+.spc-charts { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.spc-chart-block { min-width:0; }
+.spc-chart-title { font-size:13px; font-weight:600; color:var(--text-2); margin-bottom:6px; }
+.spc-chart-sub { font-size:11.5px; font-weight:400; color:var(--text-4); }
+.spc-wrap { height:250px; }
+.spc-empty { font-size:13px; color:var(--text-4); padding:14px 16px; border:1px dashed var(--border); border-radius:8px; }
+.spc-note { margin-top:12px; line-height:1.6; }
+@media (max-width:900px) { .spc-charts { grid-template-columns:1fr; } }
+
+/* ---------- v4.0 虚拟仪表盘 / 3D 入口 ---------- */
+.dash-root {
+  margin-top: 12px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: 14px;
+  background: #f5f7fb;
+  border: 1px solid #e3e8f2;
+  border-radius: var(--radius-sm);
+}
+
+.event-photo {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  vertical-align: middle;
+}
