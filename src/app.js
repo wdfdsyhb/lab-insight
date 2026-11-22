@@ -5052,7 +5052,182 @@ function setupUncertainty() {
   });
 }
 
-/* ================= v4.1 实验知识卡 ================= */
+/* ================= v4.2 电路仿真页接线 ================= */
+
+function setupSim() {
+  if (typeof LabSim === 'undefined' || !$('tab-sim')) return;
+  LabSim.init();
+
+  // 元件库（点击添加到画布空位）
+  const pal = $('sim-palette-list');
+  if (pal) {
+    const icons = {
+      'board-esp32-devkit-c-v4': '🟩', 'wokwi-led': '💡', 'wokwi-resistor': '▬',
+      'wokwi-pushbutton': '🔘', 'wokwi-potentiometer': '🎚', 'wokwi-7segment': '🔢',
+      'wokwi-lcd1602': '🖥', 'wokwi-buzzer': '🔔', 'wokwi-slide-switch': '🎚', 'wokwi-ntc-sensor': '🌡'
+    };
+    Object.keys(LabSim.PARTS).forEach(type => {
+      const def = LabSim.PARTS[type];
+      const item = document.createElement('button');
+      item.className = 'sim-pal-item';
+      item.type = 'button';
+      const icon = document.createElement('span');
+      icon.className = 'sim-pal-icon';
+      icon.textContent = icons[type] || '🔧';
+      item.appendChild(icon);
+      item.appendChild(document.createTextNode(def.label));
+      item.addEventListener('click', () => {
+        try {
+          // 添加位置：确定性网格（避免弱随机数告警；纯布局用途）
+          const count = LabSim.getParts().length;
+          const spot = { x: 60 + (count % 5) * 150, y: 50 + Math.floor(count / 5) * 140 };
+          LabSim.addPart(type, null, spot.x, spot.y, null);
+          toast('已添加 ' + def.label + '（拖动摆位，点引脚连线）', 'success');
+        } catch (e) { toast(e.message, 'error'); }
+      });
+      pal.appendChild(item);
+    });
+  }
+
+  // 控制按钮
+  const runBtn = $('sim-run-btn');
+  const stopBtn = $('sim-stop-btn');
+  if (runBtn) runBtn.addEventListener('click', () => {
+    LabSim.start();
+    runBtn.textContent = '▶ 运行中…';
+  });
+  if (stopBtn) stopBtn.addEventListener('click', () => {
+    LabSim.stop();
+    runBtn.textContent = '▶ 运行';
+  });
+  const expBtn = $('sim-export-btn');
+  if (expBtn) expBtn.addEventListener('click', () => LabSim.exportToAnalysis());
+  const expD = $('sim-export-diagram-btn');
+  if (expD) expD.addEventListener('click', () => {
+    downloadBlob(LabSim.exportDiagram(), 'diagram.json', 'application/json');
+  });
+  const impD = $('sim-import-diagram-btn');
+  const impInput = $('sim-import-input');
+  if (impD && impInput) {
+    impD.addEventListener('click', () => impInput.click());
+    impInput.addEventListener('change', () => {
+      const f = impInput.files && impInput.files[0];
+      impInput.value = '';
+      if (!f) return;
+      f.text().then(t => LabSim.importDiagram(t))
+        .catch(e => toast('导入失败：' + e.message, 'error'));
+    });
+  }
+  const defBtn = $('sim-load-default-btn');
+  if (defBtn) defBtn.addEventListener('click', () => { LabSim.loadDefault(); toast('已载入示例电路（GPIO2 → 电阻 → LED）', 'success'); });
+  const cwBtn = $('sim-clear-watch-btn');
+  if (cwBtn) cwBtn.addEventListener('click', () => LabSim.clearWatch());
+
+  // 切到仿真页时刷新画布与示波器尺寸
+  document.querySelectorAll('.tab').forEach(b => {
+    b.addEventListener('click', () => {
+      if (b.dataset.tab === 'sim') {
+        setTimeout(() => { LabSim.openRulesEditor(); }, 50);
+      }
+    });
+  });
+
+  /* ---- v4.3 Python 脚本模式（Pyodide Worker + machine 模拟层） ---- */
+  const PY_DEFAULT = [
+    'from machine import Pin',
+    'import time',
+    '',
+    'led = Pin(2, Pin.OUT)',
+    'print("LED 闪烁开始 · GPIO2")',
+    '',
+    'while True:',
+    '    led.value(1)',
+    '    time.sleep(0.25)',
+    '    led.value(0)',
+    '    time.sleep(0.25)'
+  ].join('\n');
+
+  const modeRulesBtn = $('sim-mode-rules-btn');
+  const modePyBtn = $('sim-mode-py-btn');
+  const rulesBlock = $('sim-rules-block');
+  const pyBlock = $('sim-py-block');
+  const pyCode = $('sim-py-code');
+  const pyRun = $('sim-py-run-btn');
+  const pyStop = $('sim-py-stop-btn');
+  let pyWorker = null;
+  let pyInputsTimer = null;
+
+  function switchMode(py) {
+    LabSim.setPyMode(py);
+    if (modeRulesBtn) modeRulesBtn.classList.toggle('active', !py);
+    if (modePyBtn) modePyBtn.classList.toggle('active', !!py);
+    if (rulesBlock) rulesBlock.classList.toggle('hidden', !!py);
+    if (pyBlock) pyBlock.classList.toggle('hidden', !py);
+    if (!py && pyWorker) {
+      pyWorker.terminate();
+      pyWorker = null;
+      if (window.__simPyWorker) { try { window.__simPyWorker.terminate(); } catch (e) { /* 已终止 */ } window.__simPyWorker = null; }
+      clearInterval(pyInputsTimer);
+    }
+  }
+  if (modeRulesBtn) modeRulesBtn.addEventListener('click', () => switchMode(false));
+  if (modePyBtn) modePyBtn.addEventListener('click', () => {
+    switchMode(true);
+    if (pyCode && !pyCode.value) pyCode.value = PY_DEFAULT;
+    if (location.protocol === 'file:') {
+      toast('Python 模式需要本地服务器或线上环境（file:// 下 Worker/WASM 受限）——先用「python -m http.server」启动后再试', 'warn');
+    }
+  });
+
+  function pushInputs() {
+    if (!pyWorker) return;
+    const snap = LabSim.pyInputsSnapshot();
+    pyWorker.postMessage({ cmd: 'inputs', digital: snap.digital, analog: snap.analog });
+  }
+
+  if (pyRun) pyRun.addEventListener('click', () => {
+    if (location.protocol === 'file:') {
+      toast('Python 模式需要本地服务器或线上环境（file:// 下 Worker/WASM 受限）', 'error');
+      return;
+    }
+    if (pyWorker) pyWorker.terminate();
+    pyWorker = new Worker('sim-py-worker.js');
+    window.__simPyWorker = pyWorker; // 调试可见（局部 let 不挂 window）
+    pyWorker.onerror = function (ev) {
+      const box = $('sim-serial');
+      if (box) box.textContent += '\n[Worker 错误] ' + (ev.message || '加载失败') + ' @' + (ev.filename || '') + ':' + (ev.lineno || '');
+    };
+    const code = pyCode ? pyCode.value : '';
+    pyWorker.onmessage = e => {
+      const m = e.data || {};
+      if (m.type === 'pin') LabSim.pyPinWrite(m.g, m.v);
+      else if (m.type === 'pwm') LabSim.pyPinWrite(m.g, m.duty, true);
+      else if (m.type === 'pinmode') { /* 模拟层已含上拉语义，忽略 */ }
+      else if (m.type === 'print' || m.type === 'status' || m.type === 'error') {
+        LabSim.pyPrint((m.type === 'print' ? '' : '[' + m.type + '] ') + m.text);
+      }
+      // ready/done 静默
+    };
+    pyWorker.postMessage({ cmd: 'start', code: code, indexURL: 'vendor/pyodide/' });
+    // 输入快照定时推送（100ms，供 analogRead / pinRead）
+    clearInterval(pyInputsTimer);
+    pyInputsTimer = setInterval(pushInputs, 100);
+    if (runBtn) runBtn.textContent = '▶ 运行';
+    LabSim.start(); // 渲染循环（solveAll/示波器/波形），规则引擎被 pyMode 跳过
+  });
+  if (pyStop) pyStop.addEventListener('click', () => {
+    if (pyWorker) pyWorker.terminate();
+    pyWorker = null;
+    if (window.__simPyWorker) { try { window.__simPyWorker.terminate(); } catch (e) { /* 已终止 */ } window.__simPyWorker = null; }
+    clearInterval(pyInputsTimer);
+    LabSim.stop();
+    if (runBtn) runBtn.textContent = '▶ 运行';
+    const box = $('sim-serial');
+    if (box) box.textContent += '\n[Python 已停止]';
+  });
+}
+
+
 
 const KNOWLEDGE = {
   '导入数据': [
@@ -5159,6 +5334,7 @@ function init() {
    setupPresent();
   setupV4();
   setupKnowledge();
+  setupSim();
   $('export-csv-btn').addEventListener('click', exportDataCsv);
   $('export-xlsx-btn').addEventListener('click', exportDataXlsx);
   LabProject.wireBanner();

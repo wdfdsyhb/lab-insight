@@ -33,6 +33,7 @@
         <button class="tab" data-tab="analysis" role="tab" aria-selected="false" aria-controls="tab-analysis">智能分析</button>
         <button class="tab" data-tab="filter" role="tab" aria-selected="false" aria-controls="tab-filter">滤波实验</button>
         <button class="tab" data-tab="report" role="tab" aria-selected="false" aria-controls="tab-report">生成报告</button>
+        <button class="tab" data-tab="sim" role="tab" aria-selected="false" aria-controls="tab-sim">电路仿真</button>
       </nav>
       <button class="know-trigger" id="know-open-btn" title="实验知识卡：每个方法背后的「为什么」">📖 实验知识</button>
     </div>
@@ -1272,6 +1273,62 @@
       </div>
     </section>
 
+    <!-- ================= 页签八：电路仿真 ================= -->
+    <section class="tab-panel" id="tab-sim" role="tabpanel">
+      <div class="page-head">
+        <h1>电路仿真</h1>
+        <p class="page-desc">引脚级电路仿真（Wokwi diagram.json 兼容）+ 分析闭环：跑出波形一键导出，直接做统计 / FFT / SPC / 报告。MCU 行为由 GPIO 规则驱动，双击 ESP32 芯片编辑。</p>
+      </div>
+
+      <div class="sim-toolbar">
+        <button class="btn btn-primary" id="sim-run-btn">▶ 运行</button>
+        <button class="btn btn-outline" id="sim-stop-btn">■ 停止</button>
+        <button class="btn btn-outline" id="sim-export-btn" title="把示波器波形导出为 CSV，自动进入「数据预览」，可继续做统计/FFT/SPC/报告">📊 波形导出到分析</button>
+        <button class="btn btn-outline" id="sim-export-diagram-btn">导出 diagram.json</button>
+        <button class="btn btn-outline" id="sim-import-diagram-btn">导入 diagram.json</button>
+        <button class="btn btn-outline" id="sim-load-default-btn">示例电路</button>
+        <button class="btn btn-ghost" id="sim-clear-watch-btn">清空示波器</button>
+        <input type="file" id="sim-import-input" accept=".json" hidden>
+      </div>
+
+      <div class="sim-layout">
+        <aside class="sim-palette">
+          <div class="sim-palette-title">元件库（点击添加）</div>
+          <div id="sim-palette-list"></div>
+          <div class="sim-palette-hint">操作：点引脚A → 点引脚B 连线；拖动移动元件；右键元件删除；右键已连线引脚加入示波器；双击 ESP32 编辑 GPIO 规则</div>
+        </aside>
+        <div class="sim-canvas-wrap">
+          <div class="sim-canvas" id="sim-canvas">
+            <svg class="sim-wires" id="sim-wires"></svg>
+          </div>
+        </div>
+        <aside class="sim-side">
+          <div class="sim-side-title">MCU 模式</div>
+          <div class="sim-mcu-mode">
+            <button class="sim-mode-btn active" id="sim-mode-rules-btn">规则引擎</button>
+            <button class="sim-mode-btn" id="sim-mode-py-btn" title="浏览器内真 Python 执行（CPython WASM + machine 模拟层），需本地服务器或线上环境">🐍 Python 脚本</button>
+          </div>
+          <div id="sim-rules-block">
+            <div class="sim-side-title">MCU 规则（双击芯片同步编辑）</div>
+            <div id="sim-rules"></div>
+          </div>
+          <div id="sim-py-block" class="hidden">
+            <div class="sim-side-title">Python 脚本（machine 模拟层）</div>
+            <textarea class="sim-py-code" id="sim-py-code" spellcheck="false"></textarea>
+            <div class="row-actions">
+              <button class="btn btn-primary btn-sm" id="sim-py-run-btn">▶ 运行 Python</button>
+              <button class="btn btn-outline btn-sm" id="sim-py-stop-btn">■ 停止</button>
+            </div>
+            <div class="sim-py-note">from machine import Pin/ADC/PWM 可用（语义模拟层，语法与真板一致）；首次运行加载本地 Pyodide（约 13 MB）。</div>
+          </div>
+          <div class="sim-side-title">示波器（4 通道）</div>
+          <canvas class="sim-scope" id="sim-scope"></canvas>
+          <div class="sim-side-title">事件日志 / 串口输出</div>
+          <pre class="sim-serial" id="sim-serial"></pre>
+        </aside>
+      </div>
+    </section>
+
   </main>
 
   <div id="print-root"></div>
@@ -1317,7 +1374,7 @@
   <script src="vendor/three.min.js"></script>
   <script src="sample-data.js"></script>
   <script src="parser.js"></script>
-  <script src="analysis.js"></script>
+  <script src="analysis.js?v=43"></script>
   <script src="spc.js"></script>
   <script src="calib.js"></script>
   <script src="fit.js"></script>
@@ -1330,8 +1387,9 @@
   <script src="dashboard.js"></script>
   <script src="galaxy.js"></script>
   <script src="bench.js"></script>
-  <script src="report.js"></script>
+  <script src="report.js?v=43"></script>
+  <script src="sim.js?v=425"></script>
   <script src="project.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=43"></script>
 </body>
 </html>

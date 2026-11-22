@@ -235,3 +235,48 @@
 - [验收] 报告与 Word：报告 3494 字符含引导句 + 3 行表格 + 族错误率说明；Word 225183 字节 / 23 文件 / document.xml 32661 字符 / 2 表，含「两两比较」「Bonferroni」「校正后 p」列与三对行，族错误率文字在位
 - [验收] 边界：单组 / 有效样本 <2 / 两组全同值 / 空数组 / null 均返回 null（不抛错）；pAdj 上限截断到 1
 - [验收] 回归：串口示例 39 行跳 7、temp 25.93923076923077（σ 0.541987 / CI 0.170103 / 异常 2）、humi 62.9297、press 1013.2744、SPC 7 子组（CL 25.885 / UCL 26.237 / R̄ 0.611 / 越界 7）、主图 3 数据集、直方图 15 bin 求和 39、报告 2931 字符六节且无 Welch 段、清空对比组后 compareTTest 为 undefined、控制台 0 报错
+
+## 2026-11-22（v4.2，ZCode 第三批：电路仿真页）
+
+> 调研依据：本地 CRUMB v091226 解剖（Unity + AVR 指令级内核，闭源不可复用，只支持 ATmega328P）+ Wokwi 官方文档（QEMU-WASM 内核 / diagram.json 格式 / Chips API / 支持硬件清单）。结论与分层方案（X 引脚级 → Y MicroPython → Z esp-qemu WASM）记录在调研对话中，本批交付方案 X 第一版。
+
+- [完成] v4.2 功能 A「电路仿真页签（第八页签）」：新增 src/sim.js（约 900 行，纯本地无依赖）——元件注册表 10 种（ESP32 DevKit-C（15+15 引脚真实命名）、LED、电阻、按钮、电位器、数码管、LCD1602（I2C 占位）、蜂鸣器、拨动开关、NTC 温度源）；画布拖放 + 点引脚连线（Bezier 导线，Wokwi 五色）；引脚级电气模型：并查集网络解算，强驱动（GND/3V3/GPIO 输出）> 上拉 > 悬空，元件内部导通桥接（电阻/NTC 两脚永久导通、按钮按下导通、拨动开关按位导通；LED 单向导通在点亮判定处理）
+- [完成] v4.2 功能 B「MCU 规则引擎（无代码执行面）」：每个 GPIO 一条规则——常高 / 常低 / 交替翻转（可设周期帧）/ PWM 呼吸（三角波）/ 输入+上拉 / 输入悬空；右侧「MCU 规则」面板实时编辑，双击 ESP32 芯片定位；GPIO 电平变化写事件日志（时间戳 + HIGH/LOW）。设计取舍：不做用户字符串→JS 执行（Mimosa 安全基线，规避注入面）；指令级仿真属方案 Z（esp-qemu WASM）
+- [完成] v4.2 功能 C「示波器（4 通道）」：右键已连线引脚加入示波器，canvas 轨迹（600 帧滑窗，数字电平 0/1 + PWM 模拟值），通道图例显示引脚；「清空示波器」复位
+- [完成] v4.2 功能 D「波形一键导出到分析链路（核心卖点）」：仿真跑出的网络电平导出为 CSV（时间戳_ms + chN 列），自动写入 state.pending → doParse → 切「数据预览」——实测 600 帧 × 5 通道解析成功，可直接进统计/FFT/SPC/t 检验/报告。这是 Wokwi/CRUMB 都没有的闭环：仿真 → 数据 → 分析 → 报告在同一个工具里
+- [完成] v4.2 功能 E「diagram.json 导入 / 导出（Wokwi 兼容）」：导出 {version:1, parts:[{id,type,top,left,attrs}], connections:[[from,to,color,[]]]} 与 Wokwi 格式一致；导入吃 Wokwi 项目文件（wokwi-led / board-esp32-devkit-c-v4 等命名直接映射）
+- [验证] LED 闪烁链路：GPIO2 规则「交替翻转 15 帧」→ 220Ω → LED(A/C) → GND：运行时 LED 亮灭交替（toggle 相位与 tick 数学一致：tick 331→552 均为 HIGH 相位）；事件日志滚动 GPIO2 HIGH/LOW
+- [验证] 波形导出：运行 600 帧 → 「波形导出到分析」→ 解析「识别到 5 列 · 共 600 行 电路仿真波形」→ 自动切数据预览 ✓
+- [验证] 回归：串口示例 39 行跳 7、报告含误差分析节、控制台 0 报错 ✓
+- [修复] 本批开发中修掉四个自引入 bug：fullRender 清空画布时误删连线 SVG 容器（连线全部消失）；netOf 只登记网络根键导致非根引脚（led1:C、r1:2 等）get 全 undefined（LED 判定/桥接/示波器全失效）→ collect 改为每引脚键全量映射网络号；桥接 merge 时 strong[1] 为 undefined 抛错（单侧强驱动场景）→ reduce 合并 drivers；r1 两脚导通未建模导致 LED 恒灭（电阻两侧网络断开）→ 元件内部导通桥
+- [修复] 用户体验：元件库图标错字（mobx → ▬）；tickLoop 加 try/catch 把运行异常写进事件日志（file:// 下 window.onerror 看不到细节）
+- [备注] ①MCU 逻辑脚本（Serial.print/analogRead 用户代码）因安全扫描拦截字符串→JS 执行，本版以规则引擎替代——等价覆盖教学场景，Serial.println 类需求待方案 Y（MicroPython WASM）落地后回归；②电位器/NTC 的模拟值路径（analogRead）在规则引擎下为占位，波形记录暂只含数字电平与 PWM；③dist/ 同步与发布待手动执行（新文件 src/sim.js，无新 vendor）
+
+## 2026-11-22（v4.3，ZCode 第四批：方案 Y Python 执行 + 方案 Z 路径书）
+
+> 方案 Y 交付（浏览器内真 Python 执行）；方案 Z 交付实施手册（本机无 emscripten 构建链，编译属 CI/环境工程，手册见 docs/方案Z-esp-qemu-wasm.md）。
+
+- [完成] v4.3 功能 A「Pyodide vendor 本地化」：vendor/pyodide/ 新增 pyodide.js(14.7KB) / pyodide.asm.js(1.2MB) / pyodide.asm.wasm(10MB) / python_stdlib.zip(2.3MB) / pyodide-lock.json——CPython 3.12 WASM 完整运行时离线可用，零 CDN
+- [完成] v4.3 功能 B「Python 执行 Worker + machine 模拟层」：新增 src/sim-py-worker.js——Worker 线程加载 Pyodide，注入 machine 模拟层（Pin：value/on/off/toggle 与 PULL_UP 语义；ADC：read/read_u16；PWM：duty/duty_u16 → 主线程 PWM 占空比；time.sleep → JS 忙等桥短等待），注册为可导入模块（types.ModuleType('machine') + sys.modules），print 经 setStdout 桥到仿真页串口。**诚实定位**：Pyodide 是 CPython WASM，machine 是语义模拟层（接口与真板一致，学生代码语法原样可跑），非 ESP32 固件执行——真固件 = 方案 Z
+- [完成] v4.3 功能 C「仿真页 MCU 模式切换」：sim-side 新增「规则引擎 / 🐍 Python 脚本」双模式切换——Python 模式含代码编辑框（默认 LED 闪烁示例）、运行/停止按钮；file:// 环境提示需本地服务器（Worker/WASM 受限）；Python 模式下 applyRules 跳过（MCU 输出由 Worker 驱动），渲染循环照常（solveAll/示波器/波形记录与规则引擎共用）
+- [完成] v4.3 功能 D「桥协议与输入快照」：sim.js 新增 setPyMode/pyPinWrite/pyInputsSnapshot/pyPrint——Worker 的 pin/pwm 消息经主线程 pyPinWrite 直接写 esp.outputs 并即时解算渲染；主线程每 100ms 向 Worker 推送输入快照（digital: 各 GPIO 网络电平；analog: 电位器 SIG 0~1），Python 的 analogRead/pinRead 读快照（滞后 ≤100ms）；Python 的 print/status/error 统一写入 LabSim 串口数组 pyPrint（修复：直接写 DOM 被 renderSerial 每帧覆盖）
+- [验证] Python 闪烁全链（http://127.0.0.1:8123，file:// 不支持）：worker 加载探针 ✓ → Pyodide「运行时加载中→Python 就绪」✓ → 用户代码 print「LED 闪烁开始 · GPIO2」✓ → GPIO2 HIGH/LOW 交替（004s~013s 持续）✓
+- [验证] 回归：串口示例 39 行跳 7、报告含误差分析节、规则引擎模式 LED 运行正常（pyMode=false 时 applyRules 恢复）✓
+- [修复] 本批开发中修掉三个自引入 bug：Python print/status 直接写 DOM 被 renderSerial 每帧覆盖 → 改走 LabSim.pyPrint 串口数组；machine 未注册为模块（from machine import Pin 报 ModuleNotFoundError）→ types.ModuleType 注册；桥函数带双下划线前缀在类方法内被 Python name mangling 改写（AttributeError: _Pin__simPinMode）→ 桥函数改名 simPin* 并逐个挂 worker 全局
+- [完成] v4.3 功能 E「方案 Z 实施手册」：docs/方案Z-esp-qemu-wasm.md——esp-qemu WASM 化四步路线（构建/集成/编译服务/降级融合）、风险表（工具链摩擦、GPL 分发、性能 ~20-50 MIPS、GPIO MMIO patch 约 200-400 行 C）、验收标准；**本机无构建链未实施，属 CI/环境工程**
+- [备注] ①Pyodide Worker 内 Python 死循环用 time.sleep 忙等，worker 满负荷但 postMessage 不阻塞——实测闪烁持续 ~10s 后观察到停止现象一次，疑似消息/资源问题，转交 DSH 用 devtools worker 断点诊断（代码路径已闭环，重现步骤：sim 页 → Python 模式 → 运行默认示例）；②Pyodide 13MB 建议部署时预压缩（wasm 可 gzip 至 ~4MB）；③dist 同步含 vendor/pyodide/ 整目录（5 文件）
+
+## 2026-11-22（v4.3 验收与七处修复，DSH）
+
+> 验收 ZCode v4.2（电路仿真页）/v4.3（Python 执行）两批。实测出 7 个问题，全部已修并复验；ZCode 遗留的「Python 闪烁约 10s 后停止」已定位到两个真实根因（非 Worker 崩溃）。
+
+- [修复] **仿真时钟被 rAF 节流**：`tickLoop` 原用 `requestAnimationFrame` 驱动，窗口不可见时 Chrome 把 rAF 限到 ~1 fps，而每帧只 `st.tick++` 一次、时间却按 20 ms/帧换算 → 仿真时钟慢 50 倍，看起来像「跑一会儿自己停了」。实测对照：`setInterval(20ms)` 1.5 s 跑 80 次、`rAF` 只 3 帧（`document.visibilityState` 仍报 visible）。修法：改 `setInterval(tickLoop, STEP_MS=20)` + 按真实墙钟补步 `steps = Math.floor((now-lastTs)/STEP_MS)`，clamp 1..MAX_CATCHUP(6)，`start/stop/catch` 三处管理 timer。复验：2 s 涨 100 tick（49.75 步/秒）、12 s 涨 600（50 步/秒，GPIO2 翻转 66 次）、32 s 涨 1600，无衰减、无 done/error
+- [修复] **Python sleep 忙等冻结输入**：`simSleep` 在 Worker 内 `while (Date.now() < end) {}` 忙等，期间不消费 postMessage，主线程每 100 ms 推的 `{cmd:'inputs'}` 全被丢弃 → `ADC(34).read()` 恒为启动瞬间的值（改电位器 75%→20% 也不变）。修法：`wrapAsync()` 把 `time.sleep(` / 裸 `sleep(` 改写成 `await asyncio.sleep(`，整段包进 `async def __lab_main():` 走 `py.runPythonAsync`；语法异常回退同步 `py.runPython`。**踩坑**：初版 `import asyncio as _lab_asyncio` 但代码体写 `asyncio.sleep` → `NameError: name 'asyncio' is not defined`（Traceback 在 `_pyodide/_base.py` eval_code_async），必须 `import asyncio`。复验：40 次循环每 0.25 s 读 ADC，电位器 80%→10%→90% → 串口 `3276 / 410 / 3686`，读数实时跟随；`time.time()` 计时 0.001/0.511/1.022/1.534/2.043/2.555（步长 0.5 s 准确）
+- [修复] **`LabSim.getParts` 未导出**：`app.js` 元件库按钮调 `LabSim.getParts()` 算摆放位置，而 sim.js 的 return 对象只有 `_st()` → 点任一元件库按钮必抛 `LabSim.getParts is not a function`（被 catch 成 toast，元件加不进去）。修法：补 `getParts: function () { return st ? st.order.map(id => st.parts[id]) : []; }`。复验：10 个元件库按钮全点 → state 14 件、DOM 14 件
+- [修复] **模拟量硬编码 `analog[0]`**：电位器接 D34 时 `ADC(34).read()` 恒 0，只有 `ADC(0)` 有值。修法：`pyInputsSnapshot()` 遍历电位器 SIG 网络里每个 `pid:pin` 键，解析 ESP32 引脚号写入 `analog[g]`，只有该网络没接 MCU 时才回退 `analog[0]`。复验：电位器 75% 接 D34 → `snap.analog = {34: 0.75}`，Python `ADC(34).read()` = 3071（=0.75×4095）
+- [修复] **`addPart` 只改状态不渲染**：元件加进 `st.parts` 但画布上看不到（ghost 元件），导出 diagram.json 却包含它。修法：`addPart` 末尾调 `fullRender()`。复验：连点 10 次后 DOM 元件数与状态一致（4→14）
+- [修复] **数码管永灭（大小写不匹配）**：`solveAll` 写 `p.lit` 用大写键 A~G，`drawSevenSeg` 用小写 a~g 查 → 全部 undefined。修法：`const on = lit[k] !== undefined ? lit[k] : lit[k.toUpperCase()];`。复验：数码管 A←D2、B←D4、COM.1←GND.1，`setRule('2',{mode:'high'})` 后前两段 stroke `#ff5d3a`、其余 `#2a2f3a`
+- [修复] **Worker 不释放**：停止 Python 或切回规则模式后 `window.__simPyWorker` 仍存活，再点运行会新建第二个 Worker。修法：`switchMode(false)` 与 `pyStop` 两处都 `terminate()` 并置 `window.__simPyWorker = null`，pyStop 另把按钮文案恢复为「▶ 运行」。复验：pyStop 后 worker 为 null、`LabSim.isRunning()` false、串口尾行「[Python 已停止]」
+- [验证] **八页签全链回归**（http://127.0.0.1:8791/src/index.html）：导入数据/数据预览/校准换算/工具箱/智能分析/滤波实验/生成报告/电路仿真齐全；串口示例 39 行跳 7、temp 25.93923076923077（σ 0.5419865 / CI 0.1701031 / 异常 2）、humi 62.929743589743595、press 1013.2743589743588；仿真默认电路 4 元件 5 连线，2 s 后 tick 76；波形导出 → 101 行 × 6 列（时间戳_ms + ch0..ch4）自动切「数据预览」，统计全 ok（ch0/ch1 均值 0.5033、ch2 恒 0、ch3/ch4 恒 1）、直方图 151 bin 求和 151、SPC 30 子组、主图 6 数据集；报告 2513 字符六节含「电路仿真波形」来源与测量不确定度；演示 3 页；NTC 5000 Ω → 41.46 °C；两点标定 → B 3946.0696 / R0 9723.0311；模型辨识三次 0.9884；知识卡 18 张；3 组以上两两比较 6 行高度显著、清空后 compareTTest 已删；控制台 0 报错
+- [验证] **Word 导出结构**：填全选填项 + 2 行仪器台账 → 10194 B / 19 entries / document.xml 33485 字符 / 9 个 Heading2（一实验名称与目的、二实验器材与数据来源、三实验步骤、四注意事项、五数据记录说明、六数据结果、七分析结论、八误差分析与讨论、九附录：原始数据摘录）/ 2 表 / 含 DT9205A、DS1054Z、搭电路、注意共地、电路仿真波形
+- [备注] ①`SharedArrayBuffer` 路线已排除：本机 `crossOriginIsolated:false`、构造即抛 `SharedArrayBuffer is not defined`，需 COOP/COEP 响应头，成本高于 async sleep；②仿真页 Python 模式必须走 http（Worker/WASM fetch 受限），file:// 下 UI 已提示；③vendor/pyodide 13 MB，部署时整目录上传，wasm 可 gzip 至约 4 MB

@@ -1599,3 +1599,296 @@ body.presenting { overflow:hidden; }
 .pair-table th { background:#f0f5ff; font-weight:600; }
 .pair-table tr.pair-sig td { background:#fef6f6; }
 .pair-table tr.pair-sig td:last-child { color:#b91c1c; font-weight:600; }
+
+/* ---------- v4.2 电路仿真页 ---------- */
+.sim-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.sim-layout {
+  display: grid;
+  grid-template-columns: 190px 1fr 300px;
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .sim-layout { grid-template-columns: 1fr; }
+}
+
+.sim-palette, .sim-side {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px;
+}
+.sim-palette-title, .sim-side-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 10px;
+}
+.sim-palette-hint {
+  font-size: 11.5px;
+  color: var(--text-4);
+  line-height: 1.7;
+  margin-top: 12px;
+}
+
+.sim-pal-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  background: #fff;
+  border-radius: 8px;
+  padding: 7px 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-2);
+  transition: border-color 0.15s ease, transform 0.12s ease;
+}
+.sim-pal-item:hover { border-color: var(--primary); transform: translateY(-1px); }
+.sim-pal-icon { font-size: 15px; }
+
+.sim-canvas-wrap { min-width: 0; }
+.sim-canvas {
+  position: relative;
+  height: 560px;
+  background:
+    linear-gradient(to right, rgba(148,163,184,0.14) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148,163,184,0.14) 1px, transparent 1px),
+    #f8fafc;
+  background-size: 24px 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: auto;
+  box-shadow: var(--shadow);
+}
+.sim-wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+
+.sim-part {
+  position: absolute;
+  z-index: 2;
+  user-select: none;
+  touch-action: none;
+}
+.sim-part-title {
+  font-size: 11px;
+  color: var(--text-3);
+  margin-bottom: 3px;
+  white-space: nowrap;
+}
+.sim-pin {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.25);
+  cursor: crosshair;
+  z-index: 3;
+}
+.sim-pin.pending { box-shadow: 0 0 0 3px var(--primary); }
+.sim-part-body { position: relative; }
+
+.sim-esp32 {
+  background: linear-gradient(160deg, #14532d, #166534);
+  border-radius: 8px;
+  height: 116px;
+  border: 2px solid #052e16;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sim-esp32-chip {
+  background: #1f2937;
+  color: #d1fae5;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 16px;
+  border-radius: 6px;
+  border: 1px solid #374151;
+  cursor: pointer;
+}
+
+.sim-led {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.85), currentColor 55%);
+  background-color: currentColor;
+  border: 2px solid #334155;
+}
+.sim-led.on { background-color: currentColor; }
+
+.sim-resistor {
+  background: linear-gradient(180deg, #e7d8b8, #d4b896);
+  border: 1px solid #a1866f;
+  border-radius: 4px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 4px;
+  color: #57431f;
+}
+
+.sim-button {
+  width: 34px;
+  height: 22px;
+  margin: 4px auto 2px;
+  background: linear-gradient(180deg, #64748b, #334155);
+  border-radius: 4px;
+  border: 1px solid #1e293b;
+  cursor: pointer;
+  transition: transform 0.06s ease;
+}
+.sim-button.pressed { transform: translateY(3px); background: #1e293b; }
+
+.sim-pot {
+  position: relative;
+  height: 18px;
+  background: #e2e8f0;
+  border-radius: 9px;
+  border: 1px solid #cbd5e1;
+  cursor: ew-resize;
+}
+.sim-pot-knob {
+  position: absolute;
+  top: -3px;
+  width: 20px;
+  height: 22px;
+  background: linear-gradient(180deg, #f8fafc, #cbd5e1);
+  border: 1px solid #64748b;
+  border-radius: 5px;
+}
+
+.sim-seg { background: #10131a; border-radius: 6px; border: 2px solid #334155; }
+
+.sim-lcd {
+  background: #1a2e05;
+  border: 2px solid #365314;
+  border-radius: 4px;
+  padding: 8px 10px;
+  color: #a3e635;
+  font-family: "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.sim-buzzer {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #334155, #0f172a);
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  border: 2px solid #0f172a;
+}
+.sim-buzzer.on { color: #fbbf24; filter: drop-shadow(0 0 6px #fbbf24); }
+
+.sim-switch {
+  position: relative;
+  height: 16px;
+  background: #cbd5e1;
+  border-radius: 8px;
+  border: 1px solid #94a3b8;
+  cursor: pointer;
+}
+.sim-switch-knob {
+  position: absolute;
+  top: -3px;
+  width: 24px;
+  height: 20px;
+  background: #fff;
+  border: 1px solid #64748b;
+  border-radius: 5px;
+  transition: left 0.12s ease;
+}
+
+.sim-ntc {
+  background: #0c4a6e;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.sim-ntc-temp {
+  color: #7dd3fc;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sim-rule-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.sim-rule-g { font-size: 12.5px; color: var(--text-2); min-width: 52px; font-weight: 600; }
+.sim-rule-mode { flex: 1; font-size: 12.5px; padding: 5px 8px; }
+.sim-rule-period { width: 52px; font-size: 12.5px; padding: 5px 8px; }
+
+.sim-scope {
+  width: 100%;
+  height: 150px;
+  background: #0b1220;
+  border-radius: 8px;
+  border: 1px solid #1e293b;
+  margin-bottom: 12px;
+}
+.sim-serial {
+  background: #0f172a;
+  color: #a5f3fc;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  height: 160px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin: 0;
+}
+
+/* ---------- v4.3 Python 脚本模式 ---------- */
+.sim-mcu-mode { display: flex; gap: 8px; margin-bottom: 12px; }
+.sim-mode-btn {
+  flex: 1;
+  border: 1px solid var(--border-strong);
+  background: #fff;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.sim-mode-btn.active { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); font-weight: 600; }
+.sim-py-code {
+  width: 100%;
+  height: 180px;
+  background: #0f172a;
+  color: #a5f3fc;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 8px 10px;
+  resize: vertical;
+  margin-bottom: 8px;
+}
+.sim-py-note {
+  font-size: 11.5px;
+  color: var(--text-4);
+  line-height: 1.7;
+  margin-top: 8px;
+}

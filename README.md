@@ -4,7 +4,7 @@
 >
 > 纯前端、零后端、零依赖安装，数据全程在浏览器本地处理不上传。
 
-面向嵌入式 / 物联网方向的实验数据处理工作流，七个页签对应数据处理的七步。
+面向嵌入式 / 物联网方向的实验数据处理工作流，八个页签：七步数据处理 + 一个电路仿真页。
 
 ## 功能
 
@@ -17,8 +17,9 @@
 | **工具箱** | 嵌入式落地辅助：**生成 C 代码**（NTC B 值式+分度表 / Steinhart-Hart / ADC 转电压 / 多项式，读校准参数一键复制，可下载 `.h`）；**采样率/定时器助手**（STM32 PSC/ARR、Arduino OCR1A、过采样提示）；**分压电阻与 ADC 位数助手**（E24 阻值推荐）；**十六进制字节流解码**（ASCII / uint16 / int16）；**Arduino 完整示例**（按所选换算生成 .ino，一键下载即可烧录）；**自动模型辨识**（线性/二次/三次/指数/对数/幂/倒数七种候选自动竞选，反变换回原始空间算修正 R²）；**可复现实验包与数据指纹**（SHA-256 指纹 + zip 包，验证报告是否由这份数据经这条流水得出）；**无后端分享链接**（数据压进 URL，对方打开即恢复） |
 | **滤波实验** | 滑动平均 / 中值滤波 / 一阶低通三种滤波器勾选叠加对比；处理前后标准差/极差/异常点数变化；**FFT 频域分析**（自实现基-2 Cooley-Tukey、主频次频自动标注、直流分量单独注明、奈奎斯特上限提示，**非均匀采样自动重采样后变换**） |
 | **生成报告** | 一键套模板生成实验报告（名称目的/器材或数据来源/实验步骤/注意事项/数据记录说明/统计表/分析结论/实验事件记录/误差分析与讨论/附录，选填区块空则自动省略）；**仪器台账**（名称/型号/编号/精度允差/校准日期，与不确定度 B 类联动）；**报告模板一键预填**（温度传感器标定 / 通用采集）；复制、导出 txt/md、**Word（.docx，含真表格与嵌入图表）**、**单文件 HTML**、**PPT 答辩大纲**（6 页 Markdown，自动填数）、打印存 PDF（打印版自动附**图表附录**）；统计表可复制 **LaTeX**；全程操作流水自动写入报告，每步可复现 |
+| **电路仿真** | 引脚级电路仿真：10 种元件（ESP32 DevKit-C / LED / 电阻 / 按钮 / 电位器 / 数码管 / LCD1602 / 蜂鸣器 / 滑动开关 / NTC），拖放搭建 + 点引脚连线，并查集解算网络电平；MCU 两种驱动方式——**规则引擎**（每个 GPIO 配常高/常低/交替翻转/PWM 呼吸/输入上拉，无代码执行面）与 **Python 脚本**（浏览器内跑真 CPython 3.12，`machine.Pin/ADC/PWM` 语义模拟，`time.sleep` 走异步不冻结输入）；4 通道示波器；**波形一键导出到分析链路**（仿真 → 统计/FFT/SPC/报告闭环）；diagram.json 与 Wokwi 互相导入导出 |
 
-其他：页签符合 WAI-ARIA roles；色板采用 Okabe-Ito 色盲友好八色；超大数据（>2 万行）自动下放 Web Worker 解析，绘图用 LTTB 降采样（统计仍用全量数据）；**完全离线**——所有前端依赖（Chart.js / PapaParse / SheetJS / zoom / docx / JSZip / LZ-String / Three.js）已放入本地 `vendor/`，断网或校园网屏蔽 CDN 也能用，双击 `index.html` 即开；本地纯前端运行，数据不出浏览器。
+其他：页签符合 WAI-ARIA roles；色板采用 Okabe-Ito 色盲友好八色；超大数据（>2 万行）自动下放 Web Worker 解析，绘图用 LTTB 降采样（统计仍用全量数据）；**完全离线**——所有前端依赖（Chart.js / PapaParse / SheetJS / zoom / docx / JSZip / LZ-String / Three.js / Pyodide）已放入本地 `vendor/`，断网或校园网屏蔽 CDN 也能用，双击 `index.html` 即开；本地纯前端运行，数据不出浏览器。**注意**：电路仿真页的 Python 模式需通过 http 打开（Worker + WASM 受 file:// 限制），其余功能在 file:// 下完整可用。
 
 ## 截图
 
@@ -91,10 +92,12 @@ python -m http.server 8080
 │   ├── dashboard.js        虚拟仪表盘（SVG）
 │   ├── galaxy.js           3D 数据星系与异常猎人（Three.js）
 │   ├── bench.js            3D 数字孪生实验台
+│   ├── sim.js              电路仿真内核（元件/连线/网络解算/波形）
+│   ├── sim-py-worker.js    Python 执行 Worker（Pyodide + machine 模拟层）
 │   ├── report.js           报告生成与 Markdown 渲染
 │   ├── project.js          IndexedDB 项目库
 │   ├── sample-data.js      内置示例数据
-│   └── vendor/             离线依赖（Chart.js / PapaParse / SheetJS / zoom / docx / JSZip / LZ-String / Three.js）
+│   └── vendor/             离线依赖（Chart.js / PapaParse / SheetJS / zoom / docx / JSZip / LZ-String / Three.js / Pyodide）
 ├── samples/                示例数据文件
 │   ├── sample_serial.txt   串口日志示例（含脏行与毛刺）
 │   └── sample_data.csv     规整 CSV 示例
@@ -115,6 +118,7 @@ python -m http.server 8080
 - [JSZip](https://stuk.github.io/jszip/) — 复现包打包
 - [LZ-String](https://github.com/pieroxy/lz-string) — 分享链接压缩
 - [Three.js](https://threejs.org/)（r149 UMD）— 3D 数据星系 / 实验台
+- [Pyodide](https://pyodide.org/)（0.26.4，CPython 3.12 WASM）— 电路仿真页的 Python 脚本执行
 - FFT — 本地自实现的迭代式基-2 Cooley-Tukey 算法（非外部依赖）
 - 无后端、无数据库；数据全程在浏览器本地处理
 
