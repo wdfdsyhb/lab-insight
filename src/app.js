@@ -62,14 +62,21 @@ function toast(msg, type = 'info', ms = 2600) {
 
 /* ---------------- 页签切换 ---------------- */
 
+// v4.4 修复：sim 页签（电路仿真）没有 xxx-empty / xxx-content 这对容器，
+// 也完全不依赖导入数据——必须和 import/calib/toolbox 一样跳过，
+// 否则切到仿真页会抛 "Cannot read properties of null (reading 'classList')"。
+const NO_DATA_TABS = ['import', 'calib', 'toolbox', 'sim'];
+
 function refreshTabVisibility() {
   const active = document.querySelector('.tab-panel.active');
   if (!active) return;
   const name = active.id.replace('tab-', '');
-  if (name !== 'import' && name !== 'calib' && name !== 'toolbox') {
+  if (NO_DATA_TABS.indexOf(name) < 0) {
     const has = !!state.ds;
-    document.getElementById(name + '-empty').classList.toggle('hidden', has);
-    document.getElementById(name + '-content').classList.toggle('hidden', !has);
+    const em = document.getElementById(name + '-empty');
+    const ct = document.getElementById(name + '-content');
+    if (em) em.classList.toggle('hidden', has);
+    if (ct) ct.classList.toggle('hidden', !has);
   }
 }
 
@@ -79,7 +86,7 @@ function switchTab(name) {
     b.setAttribute('aria-selected', b.dataset.tab === name ? 'true' : 'false');
   });
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
-  if (name !== 'import' && name !== 'calib' && name !== 'toolbox' && !state.ds) {
+  if (NO_DATA_TABS.indexOf(name) < 0 && !state.ds) {
     toast('请先导入数据或加载示例数据');
   }
   refreshTabVisibility();
@@ -5175,9 +5182,27 @@ function setupSim() {
     switchMode(true);
     if (pyCode && !pyCode.value) pyCode.value = PY_DEFAULT;
     if (location.protocol === 'file:') {
-      toast('Python 模式需要本地服务器或线上环境（file:// 下 Worker/WASM 受限）——先用「python -m http.server」启动后再试', 'warn');
+      LabSim.pyPrint('离线模式：Python 运行时将从内嵌数据加载（pyodide-embed.js，首次解析约 16 MB）');
     }
   });
+
+  // v4.4：file:// 下 Python 运行时的离线载体（pyodide-embed.js 按需动态加载）
+  let embedPromise = null;
+  function ensureEmbed() {
+    if (window.__PYODIDE_EMBED) return Promise.resolve(window.__PYODIDE_EMBED);
+    if (embedPromise) return embedPromise;
+    embedPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'vendor/pyodide/pyodide-embed.js';
+      s.onload = () => {
+        if (window.__PYODIDE_EMBED) resolve(window.__PYODIDE_EMBED);
+        else reject(new Error('嵌入文件标记缺失——请重新生成 pyodide-embed.js'));
+      };
+      s.onerror = () => reject(new Error('嵌入文件加载失败：vendor/pyodide/pyodide-embed.js 缺失'));
+      document.head.appendChild(s);
+    });
+    return embedPromise;
+  }
 
   function pushInputs() {
     if (!pyWorker) return;
@@ -5185,13 +5210,37 @@ function setupSim() {
     pyWorker.postMessage({ cmd: 'inputs', digital: snap.digital, analog: snap.analog });
   }
 
-  if (pyRun) pyRun.addEventListener('click', () => {
+  if (pyRun) pyRun.addEventListener('click', async () => {
+    // v4.4：渲染循环先行（LabSim.start 会重置串口数组，必须放在所有日志之前）
+    LabSim.start();
+    // file:// 双击场景走 pyodide-embed.js 离线载体（Blob Worker + 内嵌 wasm/stdlib）
+    let embed = null;
     if (location.protocol === 'file:') {
-      toast('Python 模式需要本地服务器或线上环境（file:// 下 Worker/WASM 受限）', 'error');
-      return;
+      try {
+        LabSim.pyPrint('离线模式：加载内嵌 Python 运行时（pyodide-embed.js，首次解析约 16 MB）…');
+        embed = await ensureEmbed();
+      } catch (e) {
+        LabSim.pyPrint('[嵌入加载失败] ' + e.message);
+        toast(e.message, 'error');
+        return;
+      }
     }
     if (pyWorker) pyWorker.terminate();
-    pyWorker = new Worker('sim-py-worker.js');
+    let worker;
+    if (embed) {
+      // embed 数据直接注入 worker 源码顶层（避免 postMessage 大对象克隆疑点）
+      const workerCode = 'self.__embedData = ' + JSON.stringify({
+        wasmB64: embed.wasmB64, zipB64: embed.zipB64,
+        lockText: embed.lockText, loaderJs: embed.loaderJs,
+        asmJs: embed.asmJs || ''
+      }) + ';\n' + embed.workerSrc;
+      worker = new Worker(URL.createObjectURL(
+        new Blob([workerCode], { type: 'text/javascript' })
+      ));
+    } else {
+      worker = new Worker('sim-py-worker.js');
+    }
+    pyWorker = worker;
     window.__simPyWorker = pyWorker; // 调试可见（局部 let 不挂 window）
     pyWorker.onerror = function (ev) {
       const box = $('sim-serial');
@@ -5208,11 +5257,16 @@ function setupSim() {
       }
       // ready/done 静默
     };
-    pyWorker.postMessage({ cmd: 'start', code: code, indexURL: 'vendor/pyodide/' });
+    pyWorker.postMessage({
+      cmd: 'start', code: code,
+      // 嵌入模式：虚拟绝对 URL（fetch patch 拦截返回本地字节；blob worker 内相对 URL 无法解析）
+      indexURL: embed ? 'https://pyodide.sim/' : 'vendor/pyodide/'
+    });
     // 输入快照定时推送（100ms，供 analogRead / pinRead）
     clearInterval(pyInputsTimer);
     pyInputsTimer = setInterval(pushInputs, 100);
-    if (runBtn) runBtn.textContent = '▶ 运行';
+    // v4.4 修复：这里原来改的是规则引擎的 #sim-run-btn，Python 自己的按钮反而没状态
+    if (pyRun) pyRun.textContent = '▶ 运行中…';
     LabSim.start(); // 渲染循环（solveAll/示波器/波形），规则引擎被 pyMode 跳过
   });
   if (pyStop) pyStop.addEventListener('click', () => {
@@ -5221,7 +5275,7 @@ function setupSim() {
     if (window.__simPyWorker) { try { window.__simPyWorker.terminate(); } catch (e) { /* 已终止 */ } window.__simPyWorker = null; }
     clearInterval(pyInputsTimer);
     LabSim.stop();
-    if (runBtn) runBtn.textContent = '▶ 运行';
+    if (pyRun) pyRun.textContent = '▶ 运行 Python';
     const box = $('sim-serial');
     if (box) box.textContent += '\n[Python 已停止]';
   });

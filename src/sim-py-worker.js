@@ -151,11 +151,74 @@ const MACHINE_PY = [
   '_sys.modules["machine"] = _machine_mod'
 ].join('\n');
 
-async function boot(indexURL) {
+/* ---------- v4.4 嵌入模式（file:// 双击场景） ---------- */
+
+let embedData = null;
+
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return u8;
+}
+
+// file:// 下 fetch/XHR 受限：把嵌入的 wasm/zip/lock 以本地字节伪装成网络响应
+// 另外 Pyodide loader 会 importScripts(pyodide.asm.js)——asm.js 源码也内嵌，
+// 拦截后转 blob URL 交给原生 importScripts
+function setupEmbedPatch(embed) {
+  const files = {
+    'pyodide.asm.wasm': b64ToBytes(embed.wasmB64),
+    'python_stdlib.zip': b64ToBytes(embed.zipB64)
+  };
+  const texts = { 'pyodide-lock.json': embed.lockText || '{}' };
+  const origFetch = self.fetch;
+  self.fetch = function (url, opts) {
+    const u = String(url);
+    for (const name in files) {
+      if (u.indexOf(name) >= 0) {
+        const headers = (name.indexOf('.wasm') >= 0)
+          ? { 'Content-Type': 'application/wasm' } : {};
+        return Promise.resolve(new Response(files[name], { headers: headers }));
+      }
+    }
+    for (const name in texts) {
+      if (u.indexOf(name) >= 0) {
+        return Promise.resolve(new Response(texts[name], {}));
+      }
+    }
+    return origFetch(url, opts);
+  };
+  // importScripts patch：asm.js 等 JS 资源转 blob URL 后走原生加载
+  const origImport = self.importScripts;
+  const scriptBlobs = { 'pyodide.asm.js': embed.asmJs || '' };
+  self.importScripts = function () {
+    const urls = Array.prototype.map.call(arguments, function (u) {
+      const s = String(u);
+      for (const name in scriptBlobs) {
+        if (s.indexOf(name) >= 0) return makeBlobUrl(scriptBlobs[name]);
+      }
+      return s;
+    });
+    return origImport.apply(self, urls);
+  };
+}
+
+function makeBlobUrl(text) {
+  return URL.createObjectURL(new Blob([text], { type: 'text/javascript' }));
+}
+
+async function boot(indexURL, embed) {
   if (pyodide) return pyodide;
   if (loading) return loading;
   loading = (async function () {
-    importScripts(indexURL + 'pyodide.js');
+    if (embed) {
+      // 嵌入模式：patch fetch → loader 源码经 blob URL importScripts
+      embedData = embed;
+      setupEmbedPatch(embed);
+      importScripts(makeBlobUrl(embed.loaderJs));
+    } else {
+      importScripts(indexURL + 'pyodide.js');
+    }
     const b = bridge();
     self.__simBridge = b;
     // 桥函数逐个挂到 worker 全局（Python 侧 _js.simPinWrite 等直接可用；
@@ -174,6 +237,15 @@ async function boot(indexURL) {
 
 self.onmessage = async function (e) {
   const msg = e.data || {};
+  if (msg.cmd === 'echo') {
+    const d = self.__embedData;
+    self.postMessage({
+      type: 'print',
+      text: '[echo] __embedData=' + (d ? ('存在 keys=' + Object.keys(d).join(',') +
+        ' wasmB64长度=' + (d.wasmB64 || '').length) : '无')
+    });
+    return;
+  }
   if (msg.cmd === 'inputs') {
     inputs.digital = msg.digital || {};
     inputs.analog = msg.analog || {};
@@ -185,9 +257,16 @@ self.onmessage = async function (e) {
   }
   if (msg.cmd !== 'start') return;
   stopFlag = false;
+  // v4.4：嵌入模式的数据由 Blob 源码顶层的 self.__embedData 提供
+  const embed = (msg.embed || self.__embedData || null);
   try {
-    self.postMessage({ type: 'status', text: 'Python 运行时加载中（首次约 13 MB，本地 vendor）…' });
-    const py = await boot(msg.indexURL || 'vendor/pyodide/');
+    self.postMessage({
+      type: 'status',
+      text: embed ? '离线模式：从内嵌数据加载 Python 运行时…'
+                  : 'Python 运行时加载中（首次约 13 MB，本地 vendor）…'
+    });
+    // 嵌入模式用虚拟 indexURL（fetch patch 拦截 pyodide.* 请求返回本地字节）
+    const py = await boot(msg.indexURL || 'vendor/pyodide/', embed);
     self.postMessage({ type: 'status', text: 'Python 就绪，运行用户代码…' });
     const wrapped = wrapAsync(msg.code || '');
     try {

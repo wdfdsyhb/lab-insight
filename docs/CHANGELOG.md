@@ -280,3 +280,25 @@
 - [验证] **八页签全链回归**（http://127.0.0.1:8791/src/index.html）：导入数据/数据预览/校准换算/工具箱/智能分析/滤波实验/生成报告/电路仿真齐全；串口示例 39 行跳 7、temp 25.93923076923077（σ 0.5419865 / CI 0.1701031 / 异常 2）、humi 62.929743589743595、press 1013.2743589743588；仿真默认电路 4 元件 5 连线，2 s 后 tick 76；波形导出 → 101 行 × 6 列（时间戳_ms + ch0..ch4）自动切「数据预览」，统计全 ok（ch0/ch1 均值 0.5033、ch2 恒 0、ch3/ch4 恒 1）、直方图 151 bin 求和 151、SPC 30 子组、主图 6 数据集；报告 2513 字符六节含「电路仿真波形」来源与测量不确定度；演示 3 页；NTC 5000 Ω → 41.46 °C；两点标定 → B 3946.0696 / R0 9723.0311；模型辨识三次 0.9884；知识卡 18 张；3 组以上两两比较 6 行高度显著、清空后 compareTTest 已删；控制台 0 报错
 - [验证] **Word 导出结构**：填全选填项 + 2 行仪器台账 → 10194 B / 19 entries / document.xml 33485 字符 / 9 个 Heading2（一实验名称与目的、二实验器材与数据来源、三实验步骤、四注意事项、五数据记录说明、六数据结果、七分析结论、八误差分析与讨论、九附录：原始数据摘录）/ 2 表 / 含 DT9205A、DS1054Z、搭电路、注意共地、电路仿真波形
 - [备注] ①`SharedArrayBuffer` 路线已排除：本机 `crossOriginIsolated:false`、构造即抛 `SharedArrayBuffer is not defined`，需 COOP/COEP 响应头，成本高于 async sleep；②仿真页 Python 模式必须走 http（Worker/WASM fetch 受限），file:// 下 UI 已提示；③vendor/pyodide 13 MB，部署时整目录上传，wasm 可 gzip 至约 4 MB
+
+
+## 2026-11-22（v4.4，ZCode 第五批：Pyodide file:// 离线适配）
+
+> 让 Python 模式在 file:// 双击场景下可用（此前必须 http）。核心：Pyodide 全部运行时部件转 base64 内嵌 JS，file:// 页面 <script src> 正常加载（script 标签不受 CORS 限制），Worker 用 Blob URL 创建，fetch/importScripts 双补丁把 Pyodide 的资源请求重定向到内嵌字节。
+
+- [完成] v4.4 功能 A「pyodide-embed.js 离线载体」：py_embed_gen.py（项目根，python py_embed_gen.py 生成）把 pyodide.asm.wasm(10.1MB→b64 13.5MB) / python_stdlib.zip(2.3MB→b64 3.1MB) / pyodide.js(loader) / pyodide.asm.js(emscripten glue 1.2MB) / pyodide-lock.json / sim-py-worker.js(源码) 打包为 src/vendor/pyodide/pyodide-embed.js（17.2MB，window.__PYODIDE_EMBED 六字段）。base64 分块（1MB/块）防单语句过长
+- [完成] v4.4 功能 B「Worker 嵌入模式」：sim-py-worker.js 新增 setupEmbedPatch——patch self.fetch（pyodide.asm.wasm 返回 wasmBinary Content-Type 的 Response；stdlib.zip/lock 返回文本 Response）+ patch self.importScripts（pyodide.asm.js 转换 blob URL 后走原生加载）；boot(indexURL, embed) 双模式——嵌入模式 indexURL 用虚拟 https://pyodide.sim/（blob worker 内相对 URL 无法解析，虚拟绝对 URL 让 new URL 成功且 fetch patch 拦截）
+- [完成] v4.4 功能 C「主线程 file:// 分支」：ensureEmbed() 动态按需加载 pyodide-embed.js（一次性 Promise 缓存）；pyRun handler file:// 分支——worker 源码改为「self.__embedData=JSON 注入 + workerSrc」的 Blob（embed 数据经源码注入而非 postMessage 大对象克隆）
+- [验证] **file:///D:/Qlder/src/index.html 双击场景**：Python 模式 → 内嵌运行时加载 → 学生闪烁代码（from machine import Pin / while True / time.sleep）→ GPIO2 HIGH/LOW 交替 30 秒 → LED 元件实际点亮 ✓；回归：串口示例 39 行跳 7、报告含误差分析节、规则引擎 LED 正常 ✓
+- [修复] 本批开发中定位并修复的问题链：①ensureEmbed 后 embed 传递丢失（Blob Worker 源码是生成时刻快照，改完 onmessage 后未重新生成 embed——教训：embed.workerSrc 是磁盘快照，改 worker 必须重跑 py_embed_gen.py）②try 块内旧版 `const embed = msg.embed || null` 块级遮蔽外层注入数据（删旧行）③blob worker 内相对 indexURL 无法 new URL → 虚拟绝对域 https://pyodide.sim/ ④loader 的 importScripts(pyodide.asm.js) 请求真实网络失败 → 嵌入 asmJs + importScripts patch 转 blob URL ⑤pyPrint/状态日志被 LabSim.start() 的串口重置清空 → start 移到 pyRun handler 最前
+- [备注] ①py_embed_gen.py 必须在项目根目录运行（相对路径），sim-py-worker.js 每次改动后必须重跑生成 embed；②部署（http/https）场景不走 embed（正常 vendor 加载），pyodide-embed.js 只为 file:// 场景存在——17MB 文件不影响 http 用户（按需动态加载仅在 file:// 触发）；③debug 探针（pyPrint('[调试]…')/console.debug('[sim] bridges'))保留供排查，后续可清
+
+### v4.4 验收补记（DSH，同日）
+
+- [修复] **无数据时切「电路仿真」页签抛 `Cannot read properties of null (reading 'classList')`**：`refreshTabVisibility()`（app.js:65）按 `name + '-empty' / '-content'` 取容器，而 sim 页签没有这对容器 → `document.getElementById('sim-empty')` 为 null。改法：抽出 `const NO_DATA_TABS = ['import','calib','toolbox','sim']` 统一判断，取容器时先判空（`if (em)` / `if (ct)`）。同时 `switchTab` 的「请先导入数据」提示也改用该常量——仿真页不依赖导入数据，原先会误弹提示
+- [修复] **Python 按钮文案改错了对象**：pyRun handler 里写的是 `runBtn.textContent`（`runBtn = $('sim-run-btn')` 是规则引擎的按钮），Python 自己的 `#sim-py-run-btn` 全程显示「▶ 运行 Python」。改法：运行置「▶ 运行中…」、停止恢复「▶ 运行 Python」，都作用在 pyRun 上
+- [清理] 去掉排查期留下的 `[调试] embed=…` 串口输出（worker 内的 `echo` 调试分支保留，不影响用户）
+- [验证] **file:// 双击场景**（file:///D:/Qlder/src/index.html）：sim 页 → Python 模式 → 运行 → 串口依次「离线模式：加载内嵌 Python 运行时… / [worker] sim-py-worker.js 已加载 / [status] 离线模式：从内嵌数据加载… / [status] Python 就绪 / LED 闪烁开始 · GPIO2 / [00Ns] GPIO2 → HIGH」；`window.__PYODIDE_EMBED` 七字段 17.15 MB；60 次采样 25 次 HIGH / 20 次 LOW，HIGH 时 LED 独立 class token `on`（`sim-led on`）、LOW 时无——闪烁真实驱动元件；按钮「▶ 运行中…」→ 停止后「▶ 运行 Python」、`window.__simPyWorker` 为 null、串口尾行 [Python 已停止]；控制台 0 报错
+- [验证] **http 路径不受影响**（http://127.0.0.1:8791/src/index.html）：`window.__PYODIDE_EMBED` 未被加载（false），走 vendod 正常路径，串口「Python 运行时加载中（首次约 13 MB，本地 vendor）」→ 就绪 → GPIO2 翻转；八页签在有/无数据两种状态下切换均无报错、无多余提示
+- [验证] **回归**：串口示例 39 行跳 7、temp 25.93923076923077（σ 0.5419865 / CI 0.1701031 / 异常 [17,28]）、humi 62.929743589743595、press 1013.2743589743588；报告 2931 字符六节齐全
+- [备注] embed 新鲜度校验方法（改完 worker 后可跑）：`node -e` 里用 `vm` 加载 `pyodide-embed.js`，比较 `window.__PYODIDE_EMBED.workerSrc` 与磁盘 `src/sim-py-worker.js` 是否逐字节相同；本次为 true（10144 B）
