@@ -312,3 +312,20 @@
 - **[改进] 脚本版本号统一到 ?v=47**：index.html 四处 script 引用（analysis/report/sim/app）同步刷新，避免浏览器拿旧缓存。
 - **验收**：dist 在 http 下（127.0.0.1:8792）八页签齐全、无数据切仿真页零报错、Python 走 vendor 路径运行（LED 30 次采样 16 高 / 14 低、停止后 worker 为 null、按钮回到「▶ 运行 Python」）、串口示例 39 行跳 7 / temp 25.9392±0.1701 / 异常 2 / 报告 2931 字符；src 在 file:// 下 embed 正常加载（tick 51 步/秒）；dist 在 file:// 下 embed 缺失给出明确提示且不留后台空转。
 - **注意**：跑 build_dist.py 前先停掉挂在 dist 上的 `python -m http.server`，否则 Windows 报 `PermissionError [WinError 32]`（文件占用，脚本已重建不了目录）。
+
+## 2026-11-22（v4.6 线上部署核验，DSH）
+
+- **部署结果**：Qoder 用 dist/（36 文件 / 16.2 MB）重新发布，地址 https://lab-insight-vwpscnfaoht.qoder.zone 不变，页面标题与八页签正常。
+- **[验证] 纯离线自洽**：Network 面板 31 个请求全部同域，无任何外部 CDN / 字体 / 统计脚本；唯一 404 是 `/favicon.ico`（可选资源，不影响功能）。四个 `?v=47` 的 analysis/report/sim/app 均 200。
+- **[验证] 依赖全部就位**：Chart / ChartZoom / Papa / XLSX / docx / THREE / LZString / JSZip 均为 object 或 function；LabSim / LabSPC / LabRepro 均为 object；`window.__PYODIDE_EMBED` 为 false（http 下按设计不加载 embed）。
+- **[验证] 数据链路**：内置串口示例 39 行 / 跳过 7 / 列 temp,humi,press；temp 25.93923076923077（CI ±0.1701、异常 2 点）、humi 62.929743589743595、press 1013.2743589743588。
+- **[验证] 智能分析**：主图 3 数据集；直方图 15 bin、求和 39；SPC 均值图 CL 25.885 / UCL 26.237 / LCL 25.532，极差图 CL 0.611 / UCL 1.293 / LCL 0，越界子组 7 处（均值 5 / 极差 2）。
+- **[验证] 电路仿真（规则模式）**：点运行 3 秒 running=true、tick 151、4 元件；串口 GPIO2 HIGH/LOW 交替；LED 24 次采样 15 高 / 9 低；示波器 canvas 403×223。
+- **[验证] Python 模式（http 走 vendor）**：串口依次「[worker] sim-py-worker.js 已加载 / [status] Python 运行时加载中（首次约 13 MB，本地 vendor）… / [status] Python 就绪，运行用户代码… / LED 闪烁开始 · GPIO2」；运行中按钮「▶ 运行中…」、停止后回「▶ 运行 Python」且 worker 置 null、尾行 [Python 已停止]；LED 24 次采样 13 高 / 11 低。Network 里 sim-py-worker.js 与 vendor/pyodide 五个文件全部 200。
+- **[验证] 报告与导出**：报告 2915 字符、第一节「一、实验名称与目的」、含测量不确定度与误差分析与讨论；用标题「线上验收实验」实测捕获 4 个下载（analysis.svg / 答辩大纲.md / 单文件 HTML / .docx）；直调 `LabReport.buildDocx` 得 10361 B / 19 entries / document.xml 22732 字符 / 6 个 Heading2 / 1 表（本次无 tTest 故无 Welch 段）。
+- **[验证] 工具链**：NTC 5000 Ω → 41.46 °C；C 代码 870 字符含 `#include`；定时器 72 MHz / 100 Hz → 周期 ≈ 10000.00 µs、PSC = 10。
+- **[验证] 3D 与展示**：数据星系 canvas 2160×1305、实验台与异常猎人 HUD（「前进 24% 已复核 0 / 2 处」）均能开、Esc 后元素移除；答辩演示 3 页、右方向键翻页、标题回填、退出后 `hidden` + `display:none`；知识卡 18 张 6 组、Esc 关闭。
+- **[验证] 两两比较**：加 3 组（各 8 行）后 `.pair-table` 6 行全部「差异高度显著（校正后 p < 0.01）」，`state.compareTTest = {multi:true, k:4, m:6}`（k=4 因内置示例本身计作 A 组）。
+- **[验证] 复现与分享**：指纹 `SHA-256:a26a6f70…5b176a302b`；分享链接「携带 39 行数据，压缩后 1.5 KB」，`#share=` 前缀指向本站。
+- **[验证] 项目库**：`LabProject.saveToLibrary('线上验收-串口示例')` 成功，#project-lib-count 显示「共 1 个实验」，列表项带「打开 / 重命名 / 删除」。
+- **[验证] 无数据状态**：reload 后切 sim / calib / toolbox / import 零报错零提示；preview / analysis / filter / report 各弹一次「请先导入数据或加载示例数据」——与 `NO_DATA_TABS` 设计一致。
