@@ -302,3 +302,13 @@
 - [验证] **http 路径不受影响**（http://127.0.0.1:8791/src/index.html）：`window.__PYODIDE_EMBED` 未被加载（false），走 vendod 正常路径，串口「Python 运行时加载中（首次约 13 MB，本地 vendor）」→ 就绪 → GPIO2 翻转；八页签在有/无数据两种状态下切换均无报错、无多余提示
 - [验证] **回归**：串口示例 39 行跳 7、temp 25.93923076923077（σ 0.5419865 / CI 0.1701031 / 异常 [17,28]）、humi 62.929743589743595、press 1013.2743589743588；报告 2931 字符六节齐全
 - [备注] embed 新鲜度校验方法（改完 worker 后可跑）：`node -e` 里用 `vm` 加载 `pyodide-embed.js`，比较 `window.__PYODIDE_EMBED.workerSrc` 与磁盘 `src/sim-py-worker.js` 是否逐字节相同；本次为 true（10144 B）
+
+## 2026-11-22（v4.5 部署包瘦身，DSH）
+
+- **[新增] build_dist.py**：项目根新增构建脚本，`python build_dist.py` → 删掉旧 dist/、从 src/ 全量复制、只排除 `vendor/pyodide/pyodide-embed.js`。产物 36 文件 / 16.2 MB（原 37 文件 / 33.3 MB）。
+- **排除理由**：embed 17.15 MB 是 Pyodide 运行时的 base64 内嵌副本，仅 `location.protocol === 'file:'` 时由 `ensureEmbed()` 动态加载；http/https 部署一律走 `vendor/pyodide/` 原始 13 MB 那套，embed 传上去没有任何请求会命中。
+- **[修复] 嵌入加载失败未收渲染循环**：`pyRun` 的 file:// 分支 catch 里补 `LabSim.stop()`。原先 embed 缺失时 toast 报错返回，但 `LabSim.start()` 已经跑起来了，规则引擎在后台空转、串口还在刷 GPIO 翻转，看着像「按钮没反应但电路自己在动」。实测：dist 包在 file:// 双击 → 点运行 → 报错提示、`LabSim.isRunning()` false、tick 增量 0。
+- **[改进] 缺失提示写清两条出路**：错误文案改为「…该文件只随 src 提供，部署包 dist 已排除；file:// 调试请打开 src/index.html，或用 python -m http.server 起本地服务」。
+- **[改进] 脚本版本号统一到 ?v=47**：index.html 四处 script 引用（analysis/report/sim/app）同步刷新，避免浏览器拿旧缓存。
+- **验收**：dist 在 http 下（127.0.0.1:8792）八页签齐全、无数据切仿真页零报错、Python 走 vendor 路径运行（LED 30 次采样 16 高 / 14 低、停止后 worker 为 null、按钮回到「▶ 运行 Python」）、串口示例 39 行跳 7 / temp 25.9392±0.1701 / 异常 2 / 报告 2931 字符；src 在 file:// 下 embed 正常加载（tick 51 步/秒）；dist 在 file:// 下 embed 缺失给出明确提示且不留后台空转。
+- **注意**：跑 build_dist.py 前先停掉挂在 dist 上的 `python -m http.server`，否则 Windows 报 `PermissionError [WinError 32]`（文件占用，脚本已重建不了目录）。

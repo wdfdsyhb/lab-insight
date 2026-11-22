@@ -19,7 +19,7 @@
 | **生成报告** | 一键套模板生成实验报告（名称目的/器材或数据来源/实验步骤/注意事项/数据记录说明/统计表/分析结论/实验事件记录/误差分析与讨论/附录，选填区块空则自动省略）；**仪器台账**（名称/型号/编号/精度允差/校准日期，与不确定度 B 类联动）；**报告模板一键预填**（温度传感器标定 / 通用采集）；复制、导出 txt/md、**Word（.docx，含真表格与嵌入图表）**、**单文件 HTML**、**PPT 答辩大纲**（6 页 Markdown，自动填数）、打印存 PDF（打印版自动附**图表附录**）；统计表可复制 **LaTeX**；全程操作流水自动写入报告，每步可复现 |
 | **电路仿真** | 引脚级电路仿真：10 种元件（ESP32 DevKit-C / LED / 电阻 / 按钮 / 电位器 / 数码管 / LCD1602 / 蜂鸣器 / 滑动开关 / NTC），拖放搭建 + 点引脚连线，并查集解算网络电平；MCU 两种驱动方式——**规则引擎**（每个 GPIO 配常高/常低/交替翻转/PWM 呼吸/输入上拉，无代码执行面）与 **Python 脚本**（浏览器内跑真 CPython 3.12，`machine.Pin/ADC/PWM` 语义模拟，`time.sleep` 走异步不冻结输入）；4 通道示波器；**波形一键导出到分析链路**（仿真 → 统计/FFT/SPC/报告闭环）；diagram.json 与 Wokwi 互相导入导出 |
 
-其他：页签符合 WAI-ARIA roles；色板采用 Okabe-Ito 色盲友好八色；超大数据（>2 万行）自动下放 Web Worker 解析，绘图用 LTTB 降采样（统计仍用全量数据）；**完全离线**——所有前端依赖（Chart.js / PapaParse / SheetJS / zoom / docx / JSZip / LZ-String / Three.js / Pyodide）已放入本地 `vendor/`，断网或校园网屏蔽 CDN 也能用，双击 `index.html` 即开；本地纯前端运行，数据不出浏览器。**注意**：电路仿真页的 Python 模式需通过 http 打开（Worker + WASM 受 file:// 限制），其余功能在 file:// 下完整可用。
+其他：页签符合 WAI-ARIA roles；色板采用 Okabe-Ito 色盲友好八色；超大数据（>2 万行）自动下放 Web Worker 解析，绘图用 LTTB 降采样（统计仍用全量数据）；**完全离线**——所有前端依赖（Chart.js / PapaParse / SheetJS / zoom / docx / JSZip / LZ-String / Three.js / Pyodide）已放入本地 `vendor/`，断网或校园网屏蔽 CDN 也能用，双击 `index.html` 即开；本地纯前端运行，数据不出浏览器。电路仿真页的 Python 模式在 `file://` 下同样可跑（由 `vendor/pyodide/pyodide-embed.js` 内嵌运行时承接，避开 Worker/WASM 的同源限制），http 环境则走 vendor 原始文件。
 
 ## 截图
 
@@ -74,6 +74,8 @@ python -m http.server 8080
 ## 目录结构
 
 ```
+├── build_dist.py           构建部署包（src → dist，排除仅 file:// 用的 pyodide-embed.js）
+├── py_embed_gen.py         生成 Pyodide 内嵌载体（改过 sim-py-worker.js 后需重跑）
 ├── src/                    源码（纯静态，双击 index.html 可运行）
 │   ├── index.html          页面结构
 │   ├── style.css           样式（含打印样式表）
@@ -97,8 +99,7 @@ python -m http.server 8080
 │   ├── report.js           报告生成与 Markdown 渲染
 │   ├── project.js          IndexedDB 项目库
 │   ├── sample-data.js      内置示例数据
-│   └── vendor/             离线依赖（Chart.js / PapaParse / SheetJS / zoom / docx / JSZip / LZ-String / Three.js / Pyodide）
-├── samples/                示例数据文件
+│   └── vendor/             离线依赖（Chart.js / PapaParse / SheetJS / zoom / docx / JSZip / LZ-String / Three.js / Pyodide）├── samples/                示例数据文件
 │   ├── sample_serial.txt   串口日志示例（含脏行与毛刺）
 │   └── sample_data.csv     规整 CSV 示例
 └── docs/

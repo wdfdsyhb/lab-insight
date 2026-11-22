@@ -5198,7 +5198,7 @@ function setupSim() {
         if (window.__PYODIDE_EMBED) resolve(window.__PYODIDE_EMBED);
         else reject(new Error('嵌入文件标记缺失——请重新生成 pyodide-embed.js'));
       };
-      s.onerror = () => reject(new Error('嵌入文件加载失败：vendor/pyodide/pyodide-embed.js 缺失'));
+      s.onerror = () => reject(new Error('嵌入文件加载失败：vendor/pyodide/pyodide-embed.js 缺失（该文件只随 src 提供，部署包 dist 已排除；file:// 调试请打开 src/index.html，或用 python -m http.server 起本地服务）'));
       document.head.appendChild(s);
     });
     return embedPromise;
@@ -5222,6 +5222,7 @@ function setupSim() {
       } catch (e) {
         LabSim.pyPrint('[嵌入加载失败] ' + e.message);
         toast(e.message, 'error');
+        LabSim.stop(); // 启动失败要把渲染循环收回去，否则规则引擎在后台空转
         return;
       }
     }
