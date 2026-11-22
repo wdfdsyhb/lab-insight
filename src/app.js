@@ -4681,24 +4681,52 @@ function renderCompareChart() {
   }).join('');
   const mArr = all.map((g, gi) => statOf(series[gi].filter(v => v !== null && isFinite(v))).m).filter(v => isFinite(v));
   const spread = mArr.length >= 2 ? LabAnalysis.fmt(Math.max(...mArr) - Math.min(...mArr), 3) : '—';
-  // v4.1：两组及以上时对前两组做 Welch's t 检验（差异显著性），结果存 state.compareTTest 供报告引用
+  // v4.1/v4.2：两组做单次 Welch's t；三组以上做两两比较 + Bonferroni 校正
+  // 结果存 state.compareTTest 供报告引用（两组保留单次结构，多组存 pairs）
   let tTestHtml = '';
   if (all.length >= 2) {
-    const a1 = series[0].filter(v => v !== null && isFinite(v));
-    const a2 = series[1].filter(v => v !== null && isFinite(v));
-    const tt = LabAnalysis.tTestWelch ? LabAnalysis.tTestWelch(a1, a2) : null;
-    if (tt) {
-      state.compareTTest = {
-        col: colName, labelA: all[0].label, labelB: all[1].label,
-        t: tt.t, df: tt.df, p: tt.p, sig: tt.sig,
-        m1: tt.m1, m2: tt.m2, n1: tt.n1, n2: tt.n2
-      };
-      tTestHtml = `<div class="corr-legend" style="margin-top:8px">组间差异检验（Welch's t，「${escapeHtml(all[0].label)}」vs「${escapeHtml(all[1].label)}」，通道 ${escapeHtml(colName)}）：` +
-        `t = ${LabAnalysis.fmt(tt.t, 3)}，自由度 ≈ ${tt.df.toFixed(1)}，双尾 p = ${tt.p < 0.0001 ? tt.p.toExponential(2) : tt.p.toFixed(4)}` +
-        ` —— <b>${escapeHtml(tt.sig)}</b>。p &lt; 0.05 说明两组均值差异不太可能纯属随机波动。</div>`;
+    const gvals = series.map((s, gi) => ({
+      label: all[gi].label,
+      values: s.filter(v => v !== null && isFinite(v))
+    }));
+    if (all.length === 2) {
+      const tt = LabAnalysis.tTestWelch ? LabAnalysis.tTestWelch(gvals[0].values, gvals[1].values) : null;
+      if (tt) {
+        state.compareTTest = {
+          col: colName, labelA: all[0].label, labelB: all[1].label,
+          t: tt.t, df: tt.df, p: tt.p, sig: tt.sig,
+          m1: tt.m1, m2: tt.m2, n1: tt.n1, n2: tt.n2
+        };
+        tTestHtml = `<div class="corr-legend" style="margin-top:8px">组间差异检验（Welch's t，「${escapeHtml(all[0].label)}」vs「${escapeHtml(all[1].label)}」，通道 ${escapeHtml(colName)}）：` +
+          `t = ${LabAnalysis.fmt(tt.t, 3)}，自由度 ≈ ${tt.df.toFixed(1)}，双尾 p = ${tt.p < 0.0001 ? tt.p.toExponential(2) : tt.p.toFixed(4)}` +
+          ` —— <b>${escapeHtml(tt.sig)}</b>。p &lt; 0.05 说明两组均值差异不太可能纯属随机波动。</div>`;
+      } else {
+        delete state.compareTTest;
+        tTestHtml = `<div class="corr-legend" style="margin-top:8px">组间差异检验：样本不足（两组各需 ≥2 个有效点），暂无法计算。</div>`;
+      }
     } else {
-      delete state.compareTTest;
-      tTestHtml = `<div class="corr-legend" style="margin-top:8px">组间差异检验：样本不足（两组各需 ≥2 个有效点），暂无法计算。</div>`;
+      // 三组及以上：m = k(k−1)/2 次两两比较，Bonferroni 校正后 p = min(1, p×m)
+      const pw = LabAnalysis.tTestPairwise ? LabAnalysis.tTestPairwise(gvals, 0.05) : null;
+      if (pw) {
+        state.compareTTest = {
+          col: colName, multi: true, k: pw.k, m: pw.m, alpha: pw.alpha,
+          pairs: pw.pairs
+        };
+        const sigCount = pw.pairs.filter(x => x.pAdj < 0.05).length;
+        tTestHtml = `<div class="corr-legend" style="margin-top:8px">组间差异检验（Welch's t 两两比较，通道 ${escapeHtml(colName)}）：共 ${pw.k} 组 → ${pw.m} 次比较，Bonferroni 校正后 p = min(1, p × ${pw.m})；` +
+          `${pw.pairs.length} 对中 <b>${sigCount} 对</b>达到校正后 p &lt; 0.05。` +
+          `<table class="pair-table"><thead><tr><th>比较</th><th>t</th><th>自由度</th><th>原始 p</th><th>校正后 p</th><th>结论</th></tr></thead><tbody>` +
+          pw.pairs.map(x =>
+            `<tr class="${x.pAdj < 0.05 ? 'pair-sig' : ''}"><td>${escapeHtml(x.labelA)} vs ${escapeHtml(x.labelB)}</td>` +
+            `<td>${LabAnalysis.fmt(x.t, 3)}</td><td>${x.df.toFixed(1)}</td>` +
+            `<td>${x.p < 0.0001 ? x.p.toExponential(2) : x.p.toFixed(4)}</td>` +
+            `<td>${x.pAdj < 0.0001 ? x.pAdj.toExponential(2) : x.pAdj.toFixed(4)}</td>` +
+            `<td>${escapeHtml(x.sig)}</td></tr>`).join('') +
+          `</tbody></table>多做一次比较，"碰巧显著"的机会就多一分：${pw.m} 次比较若各自按 0.05 判定，族错误率约 ${LabAnalysis.fmt((1 - Math.pow(0.95, pw.m)) * 100, 1)}%，校正把阈值分摊到每次比较上。</div>`;
+      } else {
+        delete state.compareTTest;
+        tTestHtml = `<div class="corr-legend" style="margin-top:8px">组间差异检验：有效样本不足（每组各需 ≥2 个有效点），暂无法计算。</div>`;
+      }
     }
   } else {
     delete state.compareTTest;
@@ -5041,6 +5069,7 @@ const KNOWLEDGE = {
     { t: 'A 类与 B 类不确定度', b: 'A 类来自重复测量（uA = s/√n，"同样的东西测了很多次，每次差多少"）；B 类来自仪器本身（uB = 允差 a/√3，"仪器说 ±0.2°C，它自己就带 ±0.2"）。合成 uC = √(uA²+uB²)，扩展 U = k·uC（k=2 约 95% 置信）。误差节会告诉你哪个主导：A 类主导 → 多测几次能收敛；B 类主导 → 该换表了。' },
     { t: 'SPC 控制图怎么读', b: '均值图（Xbar）看"过程中心有没有漂移"，极差图（R）看"波动有没有变大"——两幅图越界含义不同：只有均值图越界 → 中心漂移（系统因素）；只有极差图越界 → 波动变大（随机因素加剧）；都越界 → 两者皆有。控制限由子组内的极差推算（A₂/D₃/D₄ 系数表），不是全样本的 3σ——这是 SPC 与"画三条线"的本质区别。' },
     { t: 'Welch t 检验在回答什么', b: '两组均值不一样，可能是真差异，也可能只是抽样波动。Welch t 检验在"假设两组其实没差别"的前提下算出"看到这么大差异的概率"（p 值）：p < 0.05 意味着这种差异纯属随机的可能性不到 5%。用 Welch 版而不是学生 t，是因为它不要求两组方差相等——实验数据几乎总不相等。' },
+    { t: '三组以上为什么要 Bonferroni 校正', b: '一次比较按 0.05 判定，你有 5% 的机会"无中生有"；四组就是 6 次比较，至少一次误报的概率约 1−0.95⁶ = 26%——比一次比较高了五倍。Bonferroni 把阈值分摊：校正后 p = min(1, p × 比较次数)，只有分摊后仍 < 0.05 才算显著。它保守（真差异可能被压成不显著），换来的是"报出来的显著"更可信；组数很多时可以考虑改用 Holm 逐步法，功效略高。' },
     { t: '图上的误差棒是 ±U', b: '每个数据点的误差棒 = 该通道的扩展不确定度 U = k·√(uA²+uB²)。两根曲线的误差棒互相交叠，说明这点上的差异在不确定度范围内——肉眼觉得"差很多"不一定真的显著，这时看 t 检验的 p 值。' }
   ],
   '滤波实验': [

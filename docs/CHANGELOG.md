@@ -220,3 +220,18 @@
 - [修复] 清空对比组后 t 检验残留：compare-clear-btn 与 afterParse 只清 compareSets 不清 compareTTest，导致报告里留着上一轮的组间检验。两处补 delete state.compareTTest；实测清空后 state.compareTTest 为 undefined、报告不再含 Welch 段（src/app.js）
 - [修复] 知识卡不按页签定位：页签元素的 data-tab 是英文标识（如 toolbox），而知识卡分组键是中文页签名，旧代码用 dataset.tab 去 groups.indexOf 恒为 -1，每次都落到第一组。改为读页签文本（textContent.trim()）匹配；实测六页签定位全对（src/app.js setupKnowledge）
 - [验收] 回归：串口示例 39 行跳 7、temp 25.93923076923077（σ 0.541987 / 95%CI 0.170103 / 异常 2）、humi 62.9297、press 1013.2744、直方图 15 bin 求和 39、SPC 7 子组、主图 3 数据集、报告 2917 字符六节含误差分析与讨论与测量不确定度、PPT 大纲导出正常、控制台 JS 报错 0 条
+
+## 2026-11-22（v4.2 两两比较 + Bonferroni 校正）
+
+> 上一轮遗留：t 检验只比前两组，三组以上直接按 0.05 判定会把假阳性放大。本轮补两两比较与多重比较校正。
+
+- [完成] `LabAnalysis.tTestPairwise(groups, alpha)`（analysis.js）：输入 [{label, values}]，对全部 C(k,2) 组配对做 Welch's t，返回 {k, m, alpha, pairs:[{labelA,labelB,t,df,p,pAdj,sig,rawSig,m1,m2,n1,n2}]}；校正后 p = min(1, p × m)，m = k(k−1)/2；分组不足 2 组或有效样本 < 2 返回 null。校正保守但不需要额外分布假设（不依赖各检验独立性假设）
+- [完成] 对比卡自适应（app.js renderCompareChart）：两组时保持 v4.1 的单次检验文案；三组以上渲染两两比较表（比较 / t / 自由度 / 原始 p / 校正后 p / 结论），达校正后 p < 0.05 的行标红，末尾附族错误率说明（m 次比较各自按 0.05 判定时的假阳性概率 1−0.95^m）；state.compareTTest 在两组时存单次结构、多组时存 {multi:true,k,m,alpha,pairs}
+- [完成] 报告同步（report.js buildReport / buildDocx）：多组时「数据结果」节输出引导句 + 六列 markdown 表 + 族错误率说明；Word 里生成真 Table（表头 + 每对一行，达显著的行结论列加粗），两组时仍是 v4.1 的单段文案。pkg 的 tTest 字段两种结构共用，无需改接线
+- [完成] 样式与知识卡：style.css 加 .pair-table（表头浅蓝底、显著行淡红底 + 结论列加粗深红）；KNOWLEDGE['智能分析'] 新增「三组以上为什么要 Bonferroni 校正」卡（6 组 17 卡 → 18 卡），讲清族错误率、校正公式与保守代价、组数多时可用 Holm 逐步法
+- [验收] 算法与 scipy 1.18.1 逐位一致（tmp/pairwise_ref.py）：三组样例 A/B/C 的 3 对 t / df / 原始 p / 校正后 p 全部吻合——A vs B t=-25.436488070744645 df=18 p=1.4642031880879274e-15 pAdj=4.3926095642637824e-15（scipy 4.392609564263448e-15）；A vs C t=0.11854572724905363 df=16.682456033955905 p=0.9070509902406652 pAdj=1；B vs C t=28.908222344899556 df=16.682456033955884 p=1.0920836305649748e-15 pAdj=3.2762508916949246e-15
+- [验收] 校正真的起作用（tmp/pairwise_flip.js，确定性伪随机）：5 组各 n=40、均值梯度 0.16、σ=0.5 → m=10，10 对中 2 对「原始 p < 0.05 但校正后 ≥ 0.05」被翻成不显著（B vs D p=0.00899→pAdj=0.08985、C vs E p=0.00657→pAdj=0.06575），浏览器实测同样两组翻转，界面标为「弱显著（校正后 0.05 ≤ p < 0.10）」且不高亮
+- [验收] 界面（chrome-devtools，file:///D:/Qlder/src/index.html）：3 组 → 表 3 行、m=3、族错误率 14.3%；5 组 → 表 10 行、m=10、族错误率 40.1%、7 行高亮；表头背景 rgb(240,245,255)、显著行 rgb(254,246,246) 生效；两组时无 pair-table、文案回落到单次检验（t=-23.866 df=50.9 p=2.71e-29）
+- [验收] 报告与 Word：报告 3494 字符含引导句 + 3 行表格 + 族错误率说明；Word 225183 字节 / 23 文件 / document.xml 32661 字符 / 2 表，含「两两比较」「Bonferroni」「校正后 p」列与三对行，族错误率文字在位
+- [验收] 边界：单组 / 有效样本 <2 / 两组全同值 / 空数组 / null 均返回 null（不抛错）；pAdj 上限截断到 1
+- [验收] 回归：串口示例 39 行跳 7、temp 25.93923076923077（σ 0.541987 / CI 0.170103 / 异常 2）、humi 62.9297、press 1013.2744、SPC 7 子组（CL 25.885 / UCL 26.237 / R̄ 0.611 / 越界 7）、主图 3 数据集、直方图 15 bin 求和 39、报告 2931 字符六节且无 Welch 段、清空对比组后 compareTTest 为 undefined、控制台 0 报错

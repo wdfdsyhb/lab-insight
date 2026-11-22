@@ -554,6 +554,37 @@ const LabAnalysis = (() => {
     return { t: t, df: df, p: p, sig: sig, m1: m1, m2: m2, n1: n1, n2: n2 };
   }
 
+  // 两两比较 + Bonferroni 校正（v4.2）
+  // groups: [{ label, values }]，返回 { k, m, alpha, pairs: [...] } 或 null
+  // 三组以上直接拿单次 t 检验的 p 值比 0.05，等于把"碰巧显著"的概率放大 m 倍
+  // （m 次比较、每次 5% 假阳，族错误率约 1-(0.95)^m）。Bonferroni 把阈值按比较次数分摊：
+  // 校正后 p = min(1, p × m)，再与 0.05 比 —— 保守但不需要额外分布假设。
+  function tTestPairwise(groups, alpha) {
+    const a = alpha || 0.05;
+    const gs = (groups || []).filter(g => g && g.values && g.values.length >= 2);
+    if (gs.length < 2) return null;
+    const m = gs.length * (gs.length - 1) / 2;
+    const pairs = [];
+    for (let i = 0; i < gs.length; i++) {
+      for (let j = i + 1; j < gs.length; j++) {
+        const tt = tTestWelch(gs[i].values, gs[j].values);
+        if (!tt) continue;
+        const pAdj = Math.min(1, tt.p * m);
+        const sig = pAdj < 0.01 ? '差异高度显著（校正后 p < 0.01）'
+          : pAdj < 0.05 ? '差异显著（校正后 p < 0.05）'
+            : pAdj < 0.1 ? '弱显著（校正后 0.05 ≤ p < 0.10）'
+              : '差异不显著（校正后 p ≥ 0.10）';
+        pairs.push({
+          labelA: gs[i].label, labelB: gs[j].label,
+          t: tt.t, df: tt.df, p: tt.p, pAdj: pAdj, sig: sig, rawSig: tt.sig,
+          m1: tt.m1, m2: tt.m2, n1: tt.n1, n2: tt.n2
+        });
+      }
+    }
+    if (!pairs.length) return null;
+    return { k: gs.length, m: m, alpha: a, pairs: pairs };
+  }
+
   /* ---------------- 对外 ---------------- */
 
   return {
@@ -568,6 +599,7 @@ const LabAnalysis = (() => {
     meanCI,
     corrMatrix,
     tTestWelch,
+    tTestPairwise,
     fmt,
     fmtDuration
   };
